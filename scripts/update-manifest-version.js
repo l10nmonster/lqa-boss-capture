@@ -6,8 +6,6 @@
 const fs = require('fs');
 const path = require('path');
 
-let updatedVersion;
-
 /**
  * Prepare step: Update manifest.json with the new version
  */
@@ -23,7 +21,6 @@ async function prepare(pluginConfig, context) {
 
   // Update version
   manifest.version = nextRelease.version;
-  updatedVersion = nextRelease.version;
 
   // Write back to manifest.json with pretty formatting
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');

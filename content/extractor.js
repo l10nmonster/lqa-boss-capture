@@ -1,4 +1,3 @@
-/* eslint-disable complexity */
 /**
  * Text and metadata extraction content script
  * Ported from flowCapture.js:extractTextAndMetadataInPageContext
@@ -115,7 +114,7 @@ function isRectVisible(rect, parentElement) {
     }
 
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -134,7 +133,7 @@ function extractTextAndMetadata() {
   let activeSegment = null;
   let node;
 
-  while (node = treeWalker.nextNode()) {
+  while ((node = treeWalker.nextNode())) {
     const parentElement = node.parentElement;
 
     if (parentElement) {

@@ -108,7 +108,8 @@ class URLRewriteManager {
     }
 
     try {
-      const regex = new RegExp(pattern);
+      // Validate regex pattern (will throw if invalid)
+      new RegExp(pattern);
 
       // Check if pattern has at least one capture group
       const captureGroupMatch = pattern.match(/\([^?].*?\)/);
@@ -305,5 +306,5 @@ class URLRewriteManager {
   }
 }
 
-// Initialize URL Rewrite Manager
-const urlRewriteManager = new URLRewriteManager();
+// Initialize URL Rewrite Manager (instance needed for side effects)
+const _urlRewriteManager = new URLRewriteManager();

@@ -77,7 +77,7 @@ class CartManager {
     this.setupEventListeners();
 
     // Listen for messages from content scripts
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
       if (request.action === 'segment-count-updated') {
         this.updateSegmentCount(request.count);
       }
@@ -320,7 +320,7 @@ class CartManager {
         enabled: true,
         segments
       });
-    } catch (error) {
+    } catch {
       // Silently fail for restricted pages, permission errors, or other errors
       this.updateSegmentCount(0);
     }
@@ -337,7 +337,7 @@ class CartManager {
         enabled: false,
         segments: []
       });
-    } catch (error) {
+    } catch {
       // Silently fail - tab may have been closed or navigated away
     }
   }
@@ -443,7 +443,7 @@ class CartManager {
       const pwaUrl = `${baseUrl}/?plugin=extension`;
 
       // Open PWA in new tab
-      const tab = await chrome.tabs.create({ url: pwaUrl });
+      const _tab = await chrome.tabs.create({ url: pwaUrl });
 
       // If this is the production URL, show a helpful message about opening in the app
       if (baseUrl.includes('lqaboss.l10n.monster')) {
@@ -583,7 +583,7 @@ class CartManager {
     });
   }
 
-  renderCartItem(page, index) {
+  renderCartItem(page, _index) {
     const segmentCount = page.segments.length;
     const matchedCount = page.matchedCount || 0;
     const timestamp = new Date(page.timestamp).toLocaleTimeString();
@@ -596,7 +596,7 @@ class CartManager {
       hostname = url.hostname;
       urlPath = url.pathname + url.search + url.hash;
       if (urlPath === '/') urlPath = '/';
-    } catch (e) {
+    } catch {
       // Keep full URL if parsing fails
     }
 

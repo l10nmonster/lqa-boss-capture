@@ -348,7 +348,7 @@ document.addEventListener('scroll', () => {
 
 // Shift-hold to temporarily hide X-ray
 let shiftHeldDown = false;
-let savedSegmentsForShift = [];
+let _savedSegmentsForShift = [];
 
 function handleShiftState(e) {
   if (!isCurrentlyVisible) return;
@@ -362,13 +362,13 @@ function handleShiftState(e) {
   if (onlyShiftPressed && !shiftHeldDown) {
     // Hide overlay
     shiftHeldDown = true;
-    savedSegmentsForShift = [...currentSegments];
+    _savedSegmentsForShift = [...currentSegments];
     overlay.style.display = 'none';
   } else if (!onlyShiftPressed && shiftHeldDown) {
     // Restore overlay
     overlay.style.display = '';
     shiftHeldDown = false;
-    savedSegmentsForShift = [];
+    _savedSegmentsForShift = [];
   }
 }
 

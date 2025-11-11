@@ -89,7 +89,7 @@ chrome.runtime.onConnect.addListener((port) => {
             enabled: false,
             segments: []
           });
-        } catch (e) {
+        } catch {
           // Ignore errors (tab may not have content script)
         }
       }
@@ -98,7 +98,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // Re-enable X-ray when page finishes loading (if panel is open)
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, _tab) => {
   if (changeInfo.status === 'complete' && sidePanelOpen) {
     // Check if this is the active tab
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -107,7 +107,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       if (sidePanelPort) {
         try {
           sidePanelPort.postMessage({ action: 'page-reloaded', tabId });
-        } catch (e) {
+        } catch {
           // Port may be disconnected
         }
       }
@@ -240,7 +240,7 @@ async function captureFullPageScreenshot(tabId) {
     // Try to detach debugger on error
     try {
       await chrome.debugger.detach({ tabId });
-    } catch (e) {
+    } catch {
       // Ignore detach errors
     }
     throw error;
@@ -290,7 +290,7 @@ async function capturePage(tabId) {
       await chrome.tabs.sendMessage(tabId, {
         action: 'hide-xray-temporarily'
       });
-    } catch (e) {
+    } catch {
       // Ignore if xray script not injected
     }
 
@@ -678,7 +678,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Handle debugger detach events
-chrome.debugger.onDetach.addListener((source, reason) => {
+chrome.debugger.onDetach.addListener((source, _reason) => {
   if (captureState.currentTabId === source.tabId) {
     captureState.isCapturing = false;
     captureState.currentTabId = null;

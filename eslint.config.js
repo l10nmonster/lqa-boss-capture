@@ -23,7 +23,17 @@ module.exports = [
         TextEncoder: 'readonly',
         TextDecoder: 'readonly',
         Promise: 'readonly',
-        JSZip: 'readonly'
+        JSZip: 'readonly',
+        // Service worker globals
+        importScripts: 'readonly',
+        // Browser APIs
+        indexedDB: 'readonly',
+        BroadcastChannel: 'readonly',
+        NodeFilter: 'readonly',
+        confirm: 'readonly',
+        alert: 'readonly',
+        // Global script variables
+        settingsManager: 'readonly'
       }
     },
     rules: {
@@ -37,7 +47,7 @@ module.exports = [
     }
   },
   {
-    files: ['__tests__/**/*.js'],
+    files: ['__tests__/**/*.js', 'tests/**/*.js'],
     languageOptions: {
       globals: {
         jest: 'readonly',
@@ -50,7 +60,19 @@ module.exports = [
         afterEach: 'readonly',
         require: 'readonly',
         module: 'readonly',
-        __dirname: 'readonly'
+        __dirname: 'readonly',
+        global: 'readonly',
+        Buffer: 'readonly'
+      }
+    }
+  },
+  {
+    // CommonJS modules (can be used in both browser and node contexts)
+    files: ['content/**/*.js', 'lib/fe00-decoder.js', 'sidepanel/settings.js', 'sidepanel/urlRewrite.js'],
+    languageOptions: {
+      globals: {
+        module: 'readonly',
+        exports: 'readonly'
       }
     }
   },
@@ -69,7 +91,8 @@ module.exports = [
     ignores: [
       'node_modules/**',
       'lib/jszip.min.js',
-      '.claude/**'
+      '.claude/**',
+      'coverage/**'
     ]
   }
 ];
