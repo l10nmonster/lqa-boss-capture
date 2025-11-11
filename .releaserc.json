@@ -13,7 +13,20 @@
     [
       "./scripts/update-manifest-version.js"
     ],
-    "@semantic-release/github",
+    [
+      "./scripts/semantic-release-package-extension.js"
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "lqa-boss-capture-v*.zip",
+            "label": "Chrome Extension Package"
+          }
+        ]
+      }
+    ],
     [
       "@semantic-release/git",
       {

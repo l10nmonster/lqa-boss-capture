@@ -5,14 +5,20 @@
   "scripts": {
     "setup": "npm install && npm run copy-deps",
     "copy-deps": "cp node_modules/jszip/dist/jszip.min.js lib/",
-    "clean": "rm -f lib/jszip.min.js",
+    "build": "npm run copy-deps && node esbuild.config.js",
+    "build:dev": "npm run copy-deps && node esbuild.config.js --dev",
+    "package": "npm run build && node scripts/package-extension.js",
+    "clean": "rm -rf dist/ lib/jszip.min.js lqa-boss-capture-v*.zip",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint .",
     "semantic-release": "semantic-release"
   },
   "dependencies": {
-    "jszip": "^3.10.1"
+    "archiver": "^7.0.1",
+    "esbuild": "^0.24.2",
+    "jszip": "^3.10.1",
+    "typescript": "^5.7.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",

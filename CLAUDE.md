@@ -8,12 +8,41 @@ This file provides guidance for working with the LQA Boss Capture Chrome Extensi
 ```bash
 npm install          # Install dependencies
 npm run setup        # Install dependencies and copy JSZip
-npm run copy-deps    # Copy JSZip to lib/
+npm run build        # Build extension from TypeScript to dist/
+npm run build:dev    # Build with source maps for debugging
+npm run package      # Build and create ZIP package
+npm run clean        # Clean all build artifacts
 npm test             # Run tests with Jest
 npm run test:watch   # Run tests in watch mode
 npm run lint         # Run ESLint
 npm run semantic-release  # Manual semantic release (automated via GitHub Actions)
 ```
+
+### Building the Extension
+The extension is written in TypeScript and must be built before loading in Chrome:
+
+1. **Development Build** (with source maps):
+   ```bash
+   npm run build:dev
+   ```
+
+2. **Production Build** (minified):
+   ```bash
+   npm run build
+   ```
+
+3. **Package for Distribution**:
+   ```bash
+   npm run package
+   ```
+
+The build process:
+- Compiles TypeScript files from `src/` to JavaScript in `dist/`
+- Bundles each entry point using esbuild
+- Copies static assets (icons, HTML, CSS, JSZip)
+- Creates a clean `dist/` folder ready to load as unpacked extension
+
+**IMPORTANT**: Always load the `dist/` folder in Chrome, not the root project folder. The `dist/` folder is small (~2MB) compared to the root folder with `node_modules/` (~140MB).
 
 ### Semantic Versioning & Releases
 This project follows semantic versioning with automated changelog generation:
@@ -41,7 +70,8 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
 
 ### Technology Stack
 
-- **Vanilla JavaScript**: No framework dependencies
+- **TypeScript**: Strict type-safe development (compiled to ES2022 JavaScript)
+- **esbuild**: Fast TypeScript bundler and minifier
 - **Chrome Extension APIs**: Manifest V3
 - **JSZip**: For creating .lqaboss ZIP files
 - **Chrome Debugger API**: For full-page screenshot capture
@@ -51,7 +81,9 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
 
 ### Core Components
 
-1. **Background Service Worker** (`background/service-worker.js`)
+**Source Code** (`src/` - TypeScript):
+
+1. **Background Service Worker** (`src/background/service-worker.ts`)
    - Orchestrates capture process
    - Handles screenshot capture via Chrome Debugger API
    - Creates ZIP files with JSZip
@@ -59,18 +91,24 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
    - Stores pending flows temporarily in memory (5-minute expiration)
 
 2. **Content Scripts**
-   - `content/extractor.js`: Extracts text segments with FE00-encoded metadata
-   - `content/xray-overlay.js`: X-Ray Vision overlay showing detected segments
+   - `src/content/extractor.ts`: Extracts text segments with FE00-encoded metadata
+   - `src/content/xray-overlay.ts`: X-Ray Vision overlay showing detected segments
 
-3. **Side Panel** (`sidepanel/`)
+3. **Side Panel** (`src/sidepanel/`)
    - `index.html`: Cart UI
-   - `cart.js`: Cart management and capture orchestration
-   - `settings.js`: Settings persistence (TM endpoint, languages)
+   - `cart.ts`: Cart management and capture orchestration
+   - `settings.ts`: Settings persistence (TM endpoint, languages)
+   - `urlRewrite.ts`: URL rewrite rule management
    - `styles.css`: Pure CSS styling (no Tailwind)
 
-4. **Utilities** (`lib/`)
-   - `fe00-decoder.js`: Unicode metadata decoder for LQA markers
-   - `jszip.min.js`: ZIP file generation
+4. **Utilities** (`src/lib/`)
+   - `fe00-decoder.ts`: Unicode metadata decoder for LQA markers
+
+**Build Output** (`dist/` - JavaScript):
+- Compiled and bundled JavaScript from TypeScript sources
+- Static assets (icons, HTML, CSS)
+- `jszip.min.js`: External library for ZIP file generation
+- `manifest.json`: Extension manifest (copied from root)
 
 ## PWA Integration Architecture
 
@@ -163,23 +201,29 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
 
 ### Setup
 
-1. **Install dependencies**:
+1. **Install dependencies and build**:
    ```bash
-   # Download JSZip
-   curl -o lib/jszip.min.js https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
+   npm install
+   npm run build
    ```
 
 2. **Load in Chrome**:
    - Navigate to `chrome://extensions`
    - Enable "Developer mode"
    - Click "Load unpacked"
-   - Select the extension directory
+   - Select the **`dist/`** directory (NOT the root directory)
    - Note the Extension ID
 
 3. **Configure PWA** (in the lqa-boss repository):
    - Copy Extension ID
    - Update `src/plugins/ChromeExtensionPlugin.ts:14` in the lqa-boss repository
    - Rebuild PWA: `npm run build`
+
+**Development Workflow**:
+- Edit TypeScript files in `src/`
+- Run `npm run build:dev` to rebuild
+- Click "Reload" button in `chrome://extensions` to reload the extension
+- Test your changes
 
 ### Testing Communication
 
@@ -219,28 +263,37 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
 ### Adding New Features
 
 **New capture metadata:**
-- Edit `content/extractor.js` → `extractTextElements()` function
-- Update `flow_metadata.json` structure in `background/service-worker.js` → `createFlowZIP()`
+- Edit `src/content/extractor.ts` → `extractTextElements()` function
+- Update interfaces in `src/background/service-worker.ts`
+- Update `flow_metadata.json` structure in `src/background/service-worker.ts` → `createFlowZIP()`
 
 **New PWA messages:**
-- Add handler in `background/service-worker.js` → `chrome.runtime.onMessageExternal.addListener()`
+- Add message types to `RuntimeMessage` interface in `src/background/service-worker.ts`
+- Add handler in `src/background/service-worker.ts` → `chrome.runtime.onMessageExternal.addListener()`
 - Update PWA's `ChromeExtensionPlugin.ts` to send new message
 
 **New settings:**
+- Add fields to `Settings` interface in `src/sidepanel/settings.ts`
 - Add UI in `sidepanel/index.html`
-- Add persistence in `sidepanel/settings.js`
+- Add persistence in `src/sidepanel/settings.ts`
 - Access via `settingsManager.getSettings()` in other files
 
 ### Common Modifications
 
 **Change PWA URL detection:**
-- Edit `sidepanel/cart.js:377-379` (pwaUrl determination)
+- Edit `src/sidepanel/cart.ts` (pwaUrl determination)
 
 **Adjust flow expiration time:**
-- Edit `background/service-worker.js:637` (currently 5 minutes)
+- Edit `src/background/service-worker.ts` (currently 5 minutes)
 
 **Add new external message handlers:**
-- Edit `background/service-worker.js:621-672` (onMessageExternal listener)
+- Edit `src/background/service-worker.ts` (onMessageExternal listener)
+
+**After making changes:**
+```bash
+npm run build      # Rebuild the extension
+# Then reload in chrome://extensions
+```
 
 ## File Format Specification
 
@@ -348,18 +401,18 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
 
 ### TM Fetch Process
 
-1. **Metadata Extraction** (`content/extractor.js`):
+1. **Metadata Extraction** (`src/content/extractor.ts`):
    - Detects FE00-encoded Unicode markers
    - Decodes metadata (GUID, string ID, etc.)
    - Returns array of segments with coordinates
 
-2. **TM Lookup** (`background/service-worker.js:267-337`):
+2. **TM Lookup** (`src/background/service-worker.ts`):
    - Sends POST request with decoded metadata
    - Matches returned TUs to segments by GUID
    - Marks segments as `matched: true/false`
    - Collects unique TUs for `job.json`
 
-3. **ZIP Creation** (`background/service-worker.js:342-404`):
+3. **ZIP Creation** (`src/background/service-worker.ts`):
    - Screenshots saved as PNG files
    - `flow_metadata.json` includes all segments with match status
    - `job.json` includes unique TUs (if any matched)
@@ -438,14 +491,31 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
    - Both CLAUDE.md files
    - README.md files
 
+4. **Always rebuild after changes**:
+   ```bash
+   npm run build:dev  # Development build with source maps
+   ```
+
 ### Code Style
 
-- Use vanilla JavaScript (ES6+)
-- No frameworks or build tools
+- Use **TypeScript** with strict mode
+- Add proper type annotations to all functions
+- Create interfaces for complex data structures
+- Use Chrome extension types from `@types/chrome`
 - Comment complex logic
 - Use async/await for Chrome APIs
 - Handle promise rejections
 - Log useful debug info to console
+- Use ES2022 features (modern JavaScript)
+
+### TypeScript Guidelines
+
+- **Prefer interfaces over types** for object shapes
+- **Export interfaces** that are used across multiple files
+- **Avoid `any`** - use proper types or `unknown` if necessary
+- **Use union types** for string literals (e.g., `'info' | 'error' | 'success'`)
+- **Type DOM elements** explicitly (e.g., `as HTMLInputElement`)
+- **Use optional properties** (`?`) instead of `| undefined` where appropriate
 
 ### Security Considerations
 

@@ -6,7 +6,10 @@
       "Bash(npm test:*)",
       "Bash(cat:*)",
       "Bash(echo:*)",
-      "Bash(/Users/dlagunas/diegone/lqa-boss-capture/.gitignore)"
+      "Bash(/Users/dlagunas/diegone/lqa-boss-capture/.gitignore)",
+      "Bash(npm run build)",
+      "Bash(npm run package:*)",
+      "Bash(unzip:*)"
     ],
     "deny": [],
     "ask": []

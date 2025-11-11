@@ -12,6 +12,7 @@ const path = require('path');
 async function prepare(pluginConfig, context) {
   const { nextRelease, logger } = context;
   const manifestPath = path.resolve(process.cwd(), 'manifest.json');
+  const distManifestPath = path.resolve(process.cwd(), 'dist', 'manifest.json');
 
   logger.log(`Updating manifest.json version to ${nextRelease.version}`);
 
@@ -24,6 +25,12 @@ async function prepare(pluginConfig, context) {
 
   // Write back to manifest.json with pretty formatting
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+
+  // Also update dist/manifest.json if it exists
+  if (fs.existsSync(distManifestPath)) {
+    fs.writeFileSync(distManifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    logger.log(`dist/manifest.json version updated to ${nextRelease.version}`);
+  }
 
   logger.log(`manifest.json version updated to ${nextRelease.version}`);
 }
