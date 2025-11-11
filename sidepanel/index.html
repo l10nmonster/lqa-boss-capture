@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LQA Boss Capture</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>LQA Boss</h1>
+      <div class="header-actions">
+        <button id="url-rewrite-settings-btn" class="icon-btn" title="Settings">
+          ⚙️
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Language Settings -->
+      <section class="tm-settings">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="source-lang">Source Language</label>
+            <input
+              type="text"
+              id="source-lang"
+              placeholder="en"
+              value="en"
+            >
+          </div>
+          <div class="form-group">
+            <label for="target-lang">Target Language</label>
+            <input
+              type="text"
+              id="target-lang"
+              placeholder="es"
+              value="es"
+            >
+          </div>
+        </div>
+      </section>
+
+      <!-- Capture Controls -->
+      <section class="controls">
+        <button id="capture-btn" class="btn btn-primary">
+          Capture Page
+        </button>
+      </section>
+
+      <!-- Segment Count and Instructions -->
+      <section class="flow-info">
+        <div class="segment-count-full">
+          <span class="segment-count-label">Segments on page:</span>
+          <span id="segment-count" class="segment-count-value">0</span>
+        </div>
+        <div class="form-group">
+          <label for="job-name">Job Name</label>
+          <input
+            type="text"
+            id="job-name"
+            placeholder="Optional job name for filename..."
+          >
+        </div>
+        <div class="form-group">
+          <label for="instructions">Instructions</label>
+          <textarea
+            id="instructions"
+            placeholder="Add any special instructions for this LQA job..."
+            rows="3"
+          ></textarea>
+        </div>
+      </section>
+
+      <!-- Cart -->
+      <section class="cart">
+        <div class="cart-header">
+          <h2>Captured Pages (<span id="page-count">0</span>)</h2>
+          <button id="clear-cart-btn" class="btn-text" disabled>Clear All</button>
+        </div>
+        <div id="cart-list" class="cart-list">
+          <div class="empty-state">
+            <p>No pages captured yet</p>
+            <p class="hint">Click "Capture Page" to start</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Actions -->
+      <section class="actions">
+        <button id="send-to-pwa-btn" class="btn btn-success" disabled>
+          Send to LQA Boss
+        </button>
+        <button id="download-btn" class="btn btn-secondary" disabled>
+          Download .lqaboss file
+        </button>
+      </section>
+
+      <!-- Status -->
+      <div id="status" class="status"></div>
+    </main>
+  </div>
+
+  <!-- Warnings Modal -->
+  <div id="warnings-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Translation Memory Warnings</h3>
+        <button id="close-modal-btn" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <ul id="warnings-list" class="warnings-list"></ul>
+      </div>
+      <div class="modal-footer">
+        <button id="modal-ok-btn" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- URL Rewrite Modal -->
+  <div id="url-rewrite-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="width: 500px;">
+      <div class="modal-header">
+        <h3>Settings</h3>
+        <button id="close-rewrite-modal-btn" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- TM Settings Section -->
+        <div class="settings-section" style="margin-bottom: 24px;">
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label for="modal-pwa-url">LQA Boss URL</label>
+            <input
+              type="url"
+              id="modal-pwa-url"
+              placeholder="https://lqaboss.l10n.monster"
+              value="https://lqaboss.l10n.monster"
+            >
+          </div>
+          <div class="form-group">
+            <label for="modal-tm-endpoint">TM Lookup URL</label>
+            <input
+              type="url"
+              id="modal-tm-endpoint"
+              placeholder="https://api.example.com/tm/entries"
+            >
+          </div>
+        </div>
+
+        <!-- Quality Model Section -->
+        <div class="settings-section">
+          <h4 id="quality-model-header" style="margin-bottom: 12px; font-size: 14px; font-weight: 600; color: var(--gray-900);">Quality Model: <span id="quality-model-status" style="color: var(--gray-500);">none</span></h4>
+          <div class="quality-model-controls">
+            <div style="display: flex; gap: 8px;">
+              <input type="file" id="quality-model-upload" accept=".json" style="display: none;">
+              <button id="upload-quality-model-btn" class="btn btn-primary" style="flex: 1;">Upload Model</button>
+              <button id="clear-quality-model-btn" class="btn btn-secondary" style="flex: 1;" disabled>Clear Model</button>
+            </div>
+            <div id="quality-model-error" class="error-message" style="display: none; color: var(--danger); font-size: 12px; margin-top: 8px;"></div>
+          </div>
+        </div>
+
+        <!-- URL Rewrite Section -->
+        <div class="settings-section" style="margin-top: 24px;">
+          <h4 style="margin-bottom: 12px; font-size: 14px; font-weight: 600; color: var(--gray-900);">URL Rewrite Rules</h4>
+          <div class="rewrite-form">
+            <div class="form-group">
+              <label for="rewrite-hostname">Hostname (e.g., example.com)</label>
+              <input type="text" id="rewrite-hostname" placeholder="example.com">
+            </div>
+            <div class="form-group" style="margin-top: 8px;">
+              <label for="rewrite-regex">Regex Pattern (with capture group)</label>
+              <input type="text" id="rewrite-regex" placeholder="^/path/([^/]+)$">
+              <div id="regex-error" class="error-message" style="display: none; color: var(--danger); font-size: 12px; margin-top: 4px;"></div>
+            </div>
+            <div class="form-group" style="margin-top: 8px;">
+              <label for="rewrite-suffix">Suffix to Add</label>
+              <input type="text" id="rewrite-suffix" placeholder="-suffix">
+            </div>
+            <button id="add-rewrite-rule-btn" class="btn btn-primary" style="margin-top: 12px;">Add Rule</button>
+          </div>
+
+          <div class="rewrite-rules-list" style="margin-top: 16px;">
+            <h5 style="margin-bottom: 8px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Active Rules</h5>
+            <div id="rewrite-rules-container">
+              <div class="empty-state" style="padding: 20px; text-align: center; color: var(--gray-400);">
+                No rewrite rules configured
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+  <script src="cart.js"></script>
+  <script src="urlRewrite.js"></script>
+</body>
+</html>

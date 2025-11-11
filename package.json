@@ -1,0 +1,49 @@
+{
+  "name": "lqa-boss-capture",
+  "version": "3.0.0",
+  "description": "Chrome extension for LQA Boss - Capture web pages with screenshots and translation metadata for LQA review",
+  "scripts": {
+    "setup": "npm install && npm run copy-deps",
+    "copy-deps": "cp node_modules/jszip/dist/jszip.min.js lib/",
+    "clean": "rm -f lib/jszip.min.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint .",
+    "semantic-release": "semantic-release"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12",
+    "@semantic-release/release-notes-generator": "^14.0.1",
+    "@types/chrome": "^0.1.27",
+    "@types/jest": "^30",
+    "eslint": "^9.15.0",
+    "jest": "^30",
+    "jest-environment-jsdom": "^30",
+    "semantic-release": "^25"
+  },
+  "keywords": [
+    "chrome-extension",
+    "lqa",
+    "localization",
+    "translation",
+    "translation-memory",
+    "screenshots"
+  ],
+  "author": "L10n Monster",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/l10nmonster/lqa-boss-capture.git"
+  },
+  "bugs": {
+    "url": "https://github.com/l10nmonster/lqa-boss-capture/issues"
+  },
+  "homepage": "https://github.com/l10nmonster/lqa-boss-capture#readme"
+}
