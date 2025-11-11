@@ -17,9 +17,6 @@ npm-debug.log*
 # Test coverage
 coverage/
 
-# Tests (excluded from extension package)
-tests/
-
 # Build artifacts (lib/jszip.min.js is copied from node_modules)
 # We commit it since the extension needs it at runtime
 # lib/jszip.min.js
