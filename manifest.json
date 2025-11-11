@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LQA Boss Capture",
-  "version": "3.2.0",
+  "version": "1.0.0",
   "description": "Capture web pages with screenshots and translation metadata for LQA review",
   "permissions": [
     "activeTab",
