@@ -20,7 +20,7 @@ const archive = archiver('zip', {
 });
 
 output.on('close', () => {
-  console.log(`\n✓ Extension packaged successfully!`);
+  console.log('\n✓ Extension packaged successfully!');
   console.log(`  File: ${outputPath}`);
   console.log(`  Size: ${(archive.pointer() / 1024 / 1024).toFixed(2)} MB`);
 });

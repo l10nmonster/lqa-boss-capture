@@ -77,7 +77,7 @@ module.exports = [
     }
   },
   {
-    files: ['scripts/**/*.js', 'jest.config.js', 'eslint.config.js'],
+    files: ['scripts/**/*.js', 'jest.config.js', 'eslint.config.js', 'esbuild.config.js'],
     languageOptions: {
       globals: {
         require: 'readonly',
@@ -90,6 +90,7 @@ module.exports = [
   {
     ignores: [
       'node_modules/**',
+      'dist/**',
       'lib/jszip.min.js',
       '.claude/**',
       'coverage/**'
