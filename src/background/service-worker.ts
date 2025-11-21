@@ -700,8 +700,12 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
 
         case 'update-url-rewrite-rules': {
           urlRewriteRules = request.rules || [];
-          setupURLInterception();
-          sendResponse({ success: true });
+          const result = await setupURLInterception();
+          if (result.success) {
+            sendResponse({ success: true });
+          } else {
+            sendResponse({ success: false, error: result.error });
+          }
           break;
         }
 
@@ -756,7 +760,7 @@ chrome.debugger.onDetach.addListener((source, _reason) => {
 const URL_REWRITE_RULE_ID_BASE = 1000;
 
 // Set up URL interception using declarativeNetRequest
-async function setupURLInterception(): Promise<void> {
+async function setupURLInterception(): Promise<{ success: boolean; error?: string }> {
   console.log('[URL Rewrite] setupURLInterception called', {
     rulesCount: urlRewriteRules.length,
     sidePanelOpen,
@@ -766,8 +770,9 @@ async function setupURLInterception(): Promise<void> {
   try {
     // Check if declarativeNetRequest is available
     if (!chrome.declarativeNetRequest) {
-      console.error('[URL Rewrite] ERROR: declarativeNetRequest API not available! This might be blocked by IT policy.');
-      return;
+      const errorMsg = 'declarativeNetRequest API not available (may be blocked by IT policy)';
+      console.error('[URL Rewrite] ERROR:', errorMsg);
+      return { success: false, error: errorMsg };
     }
 
     // Only add rules if we have rules AND the side panel is open
@@ -809,12 +814,15 @@ async function setupURLInterception(): Promise<void> {
         console.log('[URL Rewrite] No rules to remove');
       }
     }
+    return { success: true };
   } catch (error) {
+    const errorMsg = (error as Error).message;
     console.error('[URL Rewrite] FAILED to set up URL interception:', error);
     console.error('[URL Rewrite] Error details:', {
-      message: (error as Error).message,
+      message: errorMsg,
       stack: (error as Error).stack
     });
+    return { success: false, error: errorMsg };
   }
 }
 

@@ -159,6 +159,17 @@ class URLRewriteManager {
       return;
     }
 
+    // Check for non-ASCII characters (Chrome's declarativeNetRequest requirement)
+    // eslint-disable-next-line no-control-regex
+    if (!/^[\x00-\x7F]*$/.test(urlRegex)) {
+      validationEl.textContent = '❌ Pattern cannot contain non-ASCII characters';
+      validationEl.style.color = 'var(--danger)';
+      validationEl.style.display = 'block';
+      previewEl.style.display = 'none';
+      addButton.disabled = true;
+      return;
+    }
+
     // Check for RE2 unsupported features
     if (urlRegex.includes('(?<!') || urlRegex.includes('(?<=')) {
       validationEl.textContent = '❌ Lookbehind not supported by Chrome';
@@ -229,13 +240,22 @@ class URLRewriteManager {
     const urlRegex = (document.getElementById('rewrite-url-regex') as HTMLInputElement).value.trim();
     const suffix = (document.getElementById('rewrite-suffix') as HTMLInputElement).value.trim();
 
+    // Save previous state in case we need to revert
+    const previousRules = JSON.parse(JSON.stringify(this.rules));
+    let isNewRule = false;
+    let editedRuleId: string | null = null;
+
     if (this.editingRuleId) {
+      // Editing existing rule
       const rule = this.rules.find(r => r.id === this.editingRuleId);
       if (rule) {
+        editedRuleId = rule.id;
         rule.urlRegex = urlRegex;
         rule.suffix = suffix;
       }
     } else {
+      // Adding new rule
+      isNewRule = true;
       const rule: URLRewriteRule = {
         id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         urlRegex,
@@ -246,8 +266,26 @@ class URLRewriteManager {
       this.rules.push(rule);
     }
 
+    // Try to register with service worker first
+    const result = await this.registerRulesWithServiceWorker();
+
+    if (!result.success) {
+      // Registration failed - revert changes
+      this.rules = previousRules;
+      await this.saveRules();
+
+      // Show error to user
+      const validationEl = document.getElementById('regex-validation')!;
+      validationEl.textContent = `❌ Failed to register rule: ${result.error}`;
+      validationEl.style.color = 'var(--danger)';
+      validationEl.style.display = 'block';
+
+      // Don't clear form or render - let user see the error and fix it
+      return;
+    }
+
+    // Registration succeeded - save to storage
     await this.saveRules();
-    await this.registerRulesWithServiceWorker();
     this.clearForm();
     this.renderRules();
   }
@@ -267,20 +305,39 @@ class URLRewriteManager {
   }
 
   private async removeRule(ruleId: string): Promise<void> {
+    const previousRules = JSON.parse(JSON.stringify(this.rules));
     this.rules = this.rules.filter(rule => rule.id !== ruleId);
+
+    const result = await this.registerRulesWithServiceWorker();
+    if (!result.success) {
+      // Revert on error
+      this.rules = previousRules;
+      alert(`Failed to remove rule: ${result.error}`);
+      return;
+    }
+
     await this.saveRules();
-    await this.registerRulesWithServiceWorker();
     this.renderRules();
   }
 
   private async toggleRule(ruleId: string): Promise<void> {
     const rule = this.rules.find(r => r.id === ruleId);
-    if (rule) {
-      rule.enabled = !rule.enabled;
-      await this.saveRules();
-      await this.registerRulesWithServiceWorker();
+    if (!rule) return;
+
+    const previousRules = JSON.parse(JSON.stringify(this.rules));
+    rule.enabled = !rule.enabled;
+
+    const result = await this.registerRulesWithServiceWorker();
+    if (!result.success) {
+      // Revert on error
+      this.rules = previousRules;
+      alert(`Failed to toggle rule: ${result.error}`);
       this.renderRules();
+      return;
     }
+
+    await this.saveRules();
+    this.renderRules();
   }
 
   private renderRules(): void {
@@ -294,17 +351,15 @@ class URLRewriteManager {
 
     container.innerHTML = this.rules.map(rule => `
       <div style="padding: 10px; margin-bottom: 8px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 4px; opacity: ${rule.enabled ? '1' : '0.5'};">
-        <div style="display: flex; align-items: start; justify-content: space-between; gap: 8px;">
-          <div style="flex: 1; min-width: 0; font-size: 11px; font-family: monospace; word-break: break-all;">
-            ${this.escapeHtml(rule.urlRegex)}
-          </div>
-          <div style="display: flex; gap: 4px; flex-shrink: 0;">
-            <button class="btn-text" data-rule-id="${rule.id}" data-action="toggle" style="padding: 2px 6px; font-size: 11px;">
-              ${rule.enabled ? 'Disable' : 'Enable'}
-            </button>
-            <button class="btn-text" data-rule-id="${rule.id}" data-action="edit" style="padding: 2px 6px; font-size: 11px;">Edit</button>
-            <button class="btn-text" data-rule-id="${rule.id}" data-action="remove" style="color: var(--danger); padding: 2px 6px; font-size: 11px;">Remove</button>
-          </div>
+        <div style="font-size: 11px; font-family: monospace; word-break: break-all; margin-bottom: 8px;">
+          ${this.escapeHtml(rule.urlRegex)}
+        </div>
+        <div style="display: flex; gap: 4px; justify-content: flex-end;">
+          <button class="btn-text" data-rule-id="${rule.id}" data-action="toggle" style="padding: 2px 6px; font-size: 11px;">
+            ${rule.enabled ? 'Disable' : 'Enable'}
+          </button>
+          <button class="btn-text" data-rule-id="${rule.id}" data-action="edit" style="padding: 2px 6px; font-size: 11px;">Edit</button>
+          <button class="btn-text" data-rule-id="${rule.id}" data-action="remove" style="color: var(--danger); padding: 2px 6px; font-size: 11px;">Remove</button>
         </div>
       </div>
     `).join('');
@@ -325,15 +380,21 @@ class URLRewriteManager {
     await chrome.storage.local.set({ url_rewrite_rules: this.rules });
   }
 
-  private async registerRulesWithServiceWorker(): Promise<void> {
+  private async registerRulesWithServiceWorker(): Promise<{ success: boolean; error?: string }> {
     try {
       const message: RuntimeMessage = {
         action: 'update-url-rewrite-rules',
         rules: this.rules.filter(r => r.enabled)
       };
-      await chrome.runtime.sendMessage(message);
+      const response = await chrome.runtime.sendMessage(message);
+      if (response && response.success) {
+        return { success: true };
+      } else {
+        return { success: false, error: response?.error || 'Unknown error' };
+      }
     } catch (error) {
       console.error('Failed to register rules with service worker:', error);
+      return { success: false, error: (error as Error).message };
     }
   }
 }
