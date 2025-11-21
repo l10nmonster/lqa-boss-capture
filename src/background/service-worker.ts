@@ -749,57 +749,153 @@ chrome.debugger.onDetach.addListener((source, _reason) => {
 });
 
 /**
- * URL Rewrite Functionality
+ * URL Rewrite Functionality using declarativeNetRequest (Manifest V3)
  */
 
-// Set up URL interception
-function setupURLInterception(): void {
-  // Remove existing listener if any
-  if (chrome.webNavigation.onBeforeNavigate.hasListener(handleNavigation)) {
-    chrome.webNavigation.onBeforeNavigate.removeListener(handleNavigation);
-  }
+// Base rule ID for URL rewrite rules (starts at 1000 to avoid conflicts)
+const URL_REWRITE_RULE_ID_BASE = 1000;
 
-  // Only add listener if we have rules AND the side panel is open
-  if (urlRewriteRules.length > 0 && sidePanelOpen) {
-    chrome.webNavigation.onBeforeNavigate.addListener(handleNavigation);
-  }
-}
-
-// Handle navigation events
-async function handleNavigation(details: chrome.webNavigation.WebNavigationParentedCallbackDetails): Promise<void> {
-  // Only process main frame navigations
-  if (details.frameId !== 0) return;
+// Set up URL interception using declarativeNetRequest
+async function setupURLInterception(): Promise<void> {
+  console.log('[URL Rewrite] setupURLInterception called', {
+    rulesCount: urlRewriteRules.length,
+    sidePanelOpen,
+    rules: urlRewriteRules
+  });
 
   try {
-    const url = new URL(details.url);
+    // Check if declarativeNetRequest is available
+    if (!chrome.declarativeNetRequest) {
+      console.error('[URL Rewrite] ERROR: declarativeNetRequest API not available! This might be blocked by IT policy.');
+      return;
+    }
 
-    // Check each rule
-    for (const rule of urlRewriteRules) {
-      // Check if hostname matches
-      if (url.hostname === rule.hostname || url.hostname === `www.${rule.hostname}`) {
-        // Test regex against pathname
-        const regex = new RegExp(rule.regex);
-        const match = url.pathname.match(regex);
+    // Only add rules if we have rules AND the side panel is open
+    if (urlRewriteRules.length > 0 && sidePanelOpen) {
+      console.log('[URL Rewrite] Converting rules to declarativeNetRequest format...');
 
-        if (match && match[1]) {
-          // Build new URL with suffix added to first capture group
-          const newPath = url.pathname.replace(regex, (fullMatch, captureGroup) => {
-            return fullMatch.replace(captureGroup, captureGroup + rule.suffix);
-          });
-          url.pathname = newPath;
+      // Convert our rules to declarativeNetRequest format
+      const dynamicRules: chrome.declarativeNetRequest.Rule[] = urlRewriteRules.map((rule, index) => {
+        return convertToDeclarativeRule(rule, URL_REWRITE_RULE_ID_BASE + index);
+      });
 
-          // Redirect to modified URL
-          await chrome.tabs.update(details.tabId, {
-            url: url.toString()
-          });
+      console.log('[URL Rewrite] Registering dynamic rules:', dynamicRules);
 
-          break; // Stop after first matching rule
-        }
+      // Update dynamic rules (remove old ones, add new ones)
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: dynamicRules.map(r => r.id),
+        addRules: dynamicRules
+      });
+
+      // Verify rules were registered
+      const registeredRules = await chrome.declarativeNetRequest.getDynamicRules();
+      console.log('[URL Rewrite] Successfully registered rules. Active dynamic rules:', registeredRules);
+    } else {
+      console.log('[URL Rewrite] Removing URL rewrite rules (panel closed or no rules)');
+
+      // Remove all URL rewrite rules when panel is closed or no rules configured
+      const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+      const rewriteRuleIds = existingRules
+        .filter(r => r.id >= URL_REWRITE_RULE_ID_BASE && r.id < URL_REWRITE_RULE_ID_BASE + 1000)
+        .map(r => r.id);
+
+      if (rewriteRuleIds.length > 0) {
+        console.log('[URL Rewrite] Removing rule IDs:', rewriteRuleIds);
+        await chrome.declarativeNetRequest.updateDynamicRules({
+          removeRuleIds: rewriteRuleIds
+        });
+        console.log('[URL Rewrite] Rules removed successfully');
+      } else {
+        console.log('[URL Rewrite] No rules to remove');
       }
     }
   } catch (error) {
-    console.error('URL rewrite error:', error);
+    console.error('[URL Rewrite] FAILED to set up URL interception:', error);
+    console.error('[URL Rewrite] Error details:', {
+      message: (error as Error).message,
+      stack: (error as Error).stack
+    });
   }
+}
+
+/**
+ * Convert URL rewrite rule to declarativeNetRequest format
+ * User provides full URL regex - we just need to find the first capture group
+ * and add the suffix to it
+ */
+function convertToDeclarativeRule(
+  rule: URLRewriteRule,
+  ruleId: number
+): chrome.declarativeNetRequest.Rule {
+  // User's regex already includes full URL pattern
+  // We just need to wrap the first capture group with suffix
+
+  let urlRegex = rule.urlRegex;
+
+  // Strip ^ and $ if present
+  if (urlRegex.startsWith('^')) {
+    urlRegex = urlRegex.slice(1);
+  }
+  if (urlRegex.endsWith('$')) {
+    urlRegex = urlRegex.slice(0, -1);
+  }
+
+  // Find first capture group
+  const firstCaptureStart = urlRegex.indexOf('(');
+  const firstCaptureEnd = findMatchingParen(urlRegex, firstCaptureStart);
+
+  if (firstCaptureStart === -1 || firstCaptureEnd === -1) {
+    throw new Error('URL rewrite regex must contain at least one capture group');
+  }
+
+  const beforeCapture = urlRegex.slice(0, firstCaptureStart);
+  const captureGroup = urlRegex.slice(firstCaptureStart, firstCaptureEnd + 1);
+  const afterCapture = urlRegex.slice(firstCaptureEnd + 1);
+
+  // Build the regex filter with capture groups for substitution
+  // We need 3 groups: before, captured value, after
+  const regexFilter = `(${beforeCapture})${captureGroup}(${afterCapture})`;
+
+  // Substitution: keep before, add suffix to captured value, keep after
+  const regexSubstitution = `\\1\\2${rule.suffix}\\3`;
+
+  console.log('[URL Rewrite] Converted rule:', {
+    id: ruleId,
+    input: rule.urlRegex,
+    suffix: rule.suffix,
+    regexFilter,
+    regexSubstitution
+  });
+
+  return {
+    id: ruleId,
+    priority: 1,
+    action: {
+      type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+      redirect: {
+        regexSubstitution
+      }
+    },
+    condition: {
+      regexFilter,
+      resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+    }
+  };
+}
+
+function findMatchingParen(str: string, startIndex: number): number {
+  let depth = 0;
+  for (let i = startIndex; i < str.length; i++) {
+    if (str[i] === '(') {
+      depth++;
+    } else if (str[i] === ')') {
+      depth--;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
 }
 
 // Initialize rules on service worker start

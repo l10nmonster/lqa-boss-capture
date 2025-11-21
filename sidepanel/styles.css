@@ -11,6 +11,13 @@
   --primary-hover: #6d28d9;
   --success: #059669;
   --success-hover: #047857;
+  --success-bg: #d1fae5;
+  --success-border: #6ee7b7;
+  --success-text: #065f46;
+  --warning: #d97706;
+  --warning-bg: #fef3c7;
+  --warning-border: #fde68a;
+  --warning-text: #92400e;
   --danger: #dc2626;
   --danger-hover: #b91c1c;
   --gray-50: #f9fafb;

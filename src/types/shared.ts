@@ -131,9 +131,8 @@ export interface QualityModelCategory {
  */
 export interface URLRewriteRule {
   id: string;
-  hostname: string;
-  regex: string;
-  suffix: string;
+  urlRegex: string;  // Full URL regex pattern (must have one capture group)
+  suffix: string;    // Suffix to add to first capture group
   enabled: boolean;
   createdAt: string;
 }

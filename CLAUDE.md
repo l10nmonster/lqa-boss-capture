@@ -60,7 +60,7 @@ This project follows semantic versioning with automated changelog generation:
   - Version number is critical for Chrome Web Store submissions
 
 ### Testing
-- **Unit Tests**: Jest tests in `__tests__/` directory
+- **Unit Tests**: Jest tests in `tests/` directory
 - **Linting**: ESLint with ES2022 configuration
 - **Coverage**: Configured coverage thresholds (50% minimum)
 

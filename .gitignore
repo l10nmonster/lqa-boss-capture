@@ -27,3 +27,7 @@ lqa-boss-capture-v*.zip
 
 # Semantic release
 .env
+
+# Extension private key (never commit this!)
+*.pem
+extension.pem

@@ -169,28 +169,20 @@
           <h4 style="margin-bottom: 12px; font-size: 14px; font-weight: 600; color: var(--gray-900);">URL Rewrite Rules</h4>
           <div class="rewrite-form">
             <div class="form-group">
-              <label for="rewrite-hostname">Hostname (e.g., example.com)</label>
-              <input type="text" id="rewrite-hostname" placeholder="example.com">
+              <label for="rewrite-url-regex">Full Regex with capture group</label>
+              <input type="text" id="rewrite-url-regex" placeholder="^https://example\.com.*/([a-z]{2})/" style="font-family: monospace; font-size: 12px;">
+              <div id="regex-validation" style="display: none; font-size: 11px; margin-top: 4px;"></div>
             </div>
             <div class="form-group" style="margin-top: 8px;">
-              <label for="rewrite-regex">Regex Pattern (with capture group)</label>
-              <input type="text" id="rewrite-regex" placeholder="^/path/([^/]+)$">
-              <div id="regex-error" class="error-message" style="display: none; color: var(--danger); font-size: 12px; margin-top: 4px;"></div>
+              <label for="rewrite-suffix">Suffix</label>
+              <input type="text" id="rewrite-suffix" placeholder="-x-invis">
             </div>
-            <div class="form-group" style="margin-top: 8px;">
-              <label for="rewrite-suffix">Suffix to Add</label>
-              <input type="text" id="rewrite-suffix" placeholder="-suffix">
-            </div>
-            <button id="add-rewrite-rule-btn" class="btn btn-primary" style="margin-top: 12px;">Add Rule</button>
+            <div id="url-preview-container" style="margin-top: 8px; display: none; font-size: 11px; padding: 6px; border-radius: 4px;"></div>
+            <button id="add-rewrite-rule-btn" class="btn btn-primary" style="margin-top: 12px;" disabled>Add Rule</button>
           </div>
 
           <div class="rewrite-rules-list" style="margin-top: 16px;">
-            <h5 style="margin-bottom: 8px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Active Rules</h5>
-            <div id="rewrite-rules-container">
-              <div class="empty-state" style="padding: 20px; text-align: center; color: var(--gray-400);">
-                No rewrite rules configured
-              </div>
-            </div>
+            <div id="rewrite-rules-container"></div>
           </div>
         </div>
       </div>
