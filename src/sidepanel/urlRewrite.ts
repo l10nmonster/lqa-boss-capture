@@ -89,6 +89,23 @@ class URLRewriteManager {
           break;
       }
     });
+
+    // Listen for tab changes to update current URL
+    chrome.tabs.onActivated.addListener(async () => {
+      await this.updateCurrentTabUrl();
+      this.validateAndPreview();
+    });
+
+    // Listen for URL updates within the same tab
+    chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
+      if (changeInfo.url) {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (activeTab?.id === tab.id) {
+          await this.updateCurrentTabUrl();
+          this.validateAndPreview();
+        }
+      }
+    });
   }
 
   private async showModal(): Promise<void> {
