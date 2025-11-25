@@ -2,10 +2,9 @@ module.exports = {
   testEnvironment: 'jsdom',
   testMatch: ['**/tests/**/*.test.js'],
   collectCoverageFrom: [
-    'lib/fe00-decoder.js',
-    'sidepanel/settings.js',
-    'content/extractor.js',
-    '!lib/jszip.min.js', // Exclude minified library
+    'test-dist/lib/fe00-decoder.js',
+    'test-dist/sidepanel/settings.js',
+    'test-dist/content/extractor.js',
     '!**/node_modules/**'
   ],
   coverageThreshold: {
@@ -15,19 +14,19 @@ module.exports = {
       lines: 39,
       statements: 40
     },
-    './lib/fe00-decoder.js': {
+    './test-dist/lib/fe00-decoder.js': {
       branches: 83,
       functions: 100,
       lines: 93,
       statements: 94
     },
-    './sidepanel/settings.js': {
+    './test-dist/sidepanel/settings.js': {
       branches: 71,
       functions: 38,
       lines: 54,
       statements: 54
     },
-    './content/extractor.js': {
+    './test-dist/content/extractor.js': {
       branches: 19,
       functions: 50,
       lines: 17,

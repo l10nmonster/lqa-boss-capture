@@ -50,26 +50,26 @@ global.NodeFilter = {
 };
 
 // Import the module for coverage tracking
-const { fe00RangeToUtf8_browser, isRectVisible } = require('../content/extractor.js');
+const { fe00RangeToUtf8Browser, isRectVisible } = require('../test-dist/content/extractor.js');
 
 describe('Extractor Module Coverage', () => {
-  describe('fe00RangeToUtf8_browser', () => {
+  describe('fe00RangeToUtf8Browser', () => {
     test('should decode simple text', () => {
       const encoded = '\uFE04\uFE08\uFE06\uFE09'; // "Hi"
-      const result = fe00RangeToUtf8_browser(encoded);
+      const result = fe00RangeToUtf8Browser(encoded);
       expect(result).toBe('Hi');
     });
 
     test('should throw on odd length', () => {
-      expect(() => fe00RangeToUtf8_browser('\uFE00\uFE01\uFE02')).toThrow();
+      expect(() => fe00RangeToUtf8Browser('\uFE00\uFE01\uFE02')).toThrow();
     });
 
     test('should throw on invalid char codes', () => {
-      expect(() => fe00RangeToUtf8_browser('\u0000\uFE01')).toThrow();
+      expect(() => fe00RangeToUtf8Browser('\u0000\uFE01')).toThrow();
     });
 
     test('should handle empty string', () => {
-      expect(fe00RangeToUtf8_browser('')).toBe('');
+      expect(fe00RangeToUtf8Browser('')).toBe('');
     });
   });
 

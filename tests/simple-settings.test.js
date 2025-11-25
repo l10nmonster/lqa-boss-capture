@@ -17,7 +17,7 @@ document.body.innerHTML = `
 `;
 
 // Import the module for coverage tracking
-const { validateQualityModel, DEFAULT_SETTINGS } = require('../sidepanel/settings.js');
+const { validateQualityModel, DEFAULT_SETTINGS } = require('../test-dist/sidepanel/settings.js');
 
 describe('Settings Module Coverage', () => {
   describe('validateQualityModel', () => {

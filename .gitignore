@@ -19,6 +19,7 @@ coverage/
 
 # Build output
 dist/
+test-dist/
 lqa-boss-capture-v*.zip
 
 # Build artifacts (lib/jszip.min.js is copied from node_modules)
