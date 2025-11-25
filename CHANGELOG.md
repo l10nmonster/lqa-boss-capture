@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.0...v2.0.1) (2025-11-25)
+
+
+### Bug Fixes
+
+* Address timing issues during initialization ([6480568](https://github.com/l10nmonster/lqa-boss-capture/commit/6480568959469bab1d4283cd86b5e6cc494d717a))
+
 # [2.0.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v1.0.0...v2.0.0) (2025-11-21)
 
 
