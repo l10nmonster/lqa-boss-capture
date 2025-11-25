@@ -262,10 +262,21 @@ class SettingsManager {
   }
 }
 
-// Global settings instance
-const settingsManager = new SettingsManager();
-if (typeof window !== 'undefined') {
-  (window as any).settingsManager = settingsManager;
+// Initialize when DOM is ready
+let settingsManager: SettingsManager;
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    settingsManager = new SettingsManager();
+    if (typeof window !== 'undefined') {
+      (window as any).settingsManager = settingsManager;
+    }
+  });
+} else {
+  settingsManager = new SettingsManager();
+  if (typeof window !== 'undefined') {
+    (window as any).settingsManager = settingsManager;
+  }
 }
 
 export { validateQualityModel, SettingsManager, DEFAULT_SETTINGS };

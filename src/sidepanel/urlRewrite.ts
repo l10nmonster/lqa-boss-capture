@@ -399,5 +399,11 @@ class URLRewriteManager {
   }
 }
 
-// Initialize
-const _urlRewriteManager = new URLRewriteManager();
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    new URLRewriteManager();
+  });
+} else {
+  new URLRewriteManager();
+}
