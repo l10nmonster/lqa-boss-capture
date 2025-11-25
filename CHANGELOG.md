@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.1...v2.0.2) (2025-11-25)
+
+
+### Bug Fixes
+
+* cleanup old files ([9f5d509](https://github.com/l10nmonster/lqa-boss-capture/commit/9f5d509671747ff4627a39140dd63c069cff2db2))
+
 ## [2.0.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.0...v2.0.1) (2025-11-25)
 
 
