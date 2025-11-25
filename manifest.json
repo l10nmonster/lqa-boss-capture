@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LQA Boss Capture",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Capture web pages with screenshots and translation metadata for LQA review",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7Bhk7sccqr0nTkGHqAwwv3f35S/R3eCniTZY4RnywezeLA7BmAmAvHwpaAcjon0I7WsVBiaNW9a4JScdCNthtpo3cC7C+71VARMStcVceAhtkkcYasnTSiH0enAFo1y75zJY2LLf7/o956kb6NYxRAK+NlgDg90OixhGUubzAgv/w6L+xMjyuq1TazXABOy96VdZNd/e0vg0n8hnZaj0Dil6vBRIfaLFNJOwy6tF/GB9u3Ln3k5+BTcmUv/XcQllnyMnMqCDzZHxaoiKNg0+W6tGU19L0DnfROqO8KoPDu+sRthS/9uTZhMSQsc1oPpDZtBwz141lJy2dqDB5t0MFQIDAQAB",
   "permissions": [

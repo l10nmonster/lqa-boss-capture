@@ -1,3 +1,10 @@
+## [2.0.3](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.2...v2.0.3) (2025-11-25)
+
+
+### Bug Fixes
+
+* listen to tab changes during regex validation ([92e791b](https://github.com/l10nmonster/lqa-boss-capture/commit/92e791bfaf01f0dd03364433ff49056a6d5c09e1))
+
 ## [2.0.2](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.1...v2.0.2) (2025-11-25)
 
 
