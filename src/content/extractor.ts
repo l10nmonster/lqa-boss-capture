@@ -89,16 +89,30 @@ function isRectVisible(rect: DOMRect, parentElement: Element): boolean {
     element = element.parentElement;
   }
 
-  // Check if rect is in viewport
-  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  // Note: We intentionally do NOT check if rect is in the current viewport
+  // because we capture full-page screenshots. Elements below the fold are valid.
 
-  if (rect.right <= 0 || rect.left >= viewportWidth ||
-      rect.bottom <= 0 || rect.top >= viewportHeight) {
+  // Check horizontal bounds only (element should be within document width)
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  if (rect.right <= 0 || rect.left >= viewportWidth) {
     return false;
   }
 
-  // Check all 4 corners with elementFromPoint to ensure fully visible
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+  // Check if element is fully within the visible viewport
+  const isFullyInViewport = rect.top >= 0 && rect.bottom <= viewportHeight &&
+                            rect.left >= 0 && rect.right <= viewportWidth;
+
+  // Only do elementFromPoint check for elements fully within viewport
+  // Elements at viewport boundaries or outside are trusted if they passed
+  // the overflow clipping checks above
+  if (!isFullyInViewport) {
+    return true;
+  }
+
+  // For elements fully in viewport, check corners with elementFromPoint
+  // to ensure they're not obscured by other elements
   const offset = 2;
   const corners = [
     { x: rect.left + offset, y: rect.top + offset },           // Top-left
@@ -108,14 +122,7 @@ function isRectVisible(rect: DOMRect, parentElement: Element): boolean {
   ];
 
   try {
-    // All 4 corners must be visible and not obscured
     for (const corner of corners) {
-      // Check if corner is in viewport
-      if (corner.x < 0 || corner.x >= viewportWidth ||
-          corner.y < 0 || corner.y >= viewportHeight) {
-        return false;
-      }
-
       const elementAtPoint = document.elementFromPoint(corner.x, corner.y);
       if (!elementAtPoint) {
         return false;

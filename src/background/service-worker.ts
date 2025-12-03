@@ -171,141 +171,226 @@ chrome.action.onClicked.addListener(async (tab) => {
   await chrome.sidePanel.open({ windowId: tab.windowId! });
 });
 
+interface PageDimensions {
+  isPageScrollable: boolean;
+  isMobileEmulation: boolean;
+  viewportWidth: number;
+  viewportHeight: number;
+  documentHeight: number;
+  contentHeight: number;
+}
+
 /**
- * Capture full-page screenshot using Chrome Debugger API
+ * Get page dimensions and detect mobile emulation
  */
-async function captureFullPageScreenshot(tabId: number): Promise<string> {
-  try {
-    // Attach debugger
-    await chrome.debugger.attach({ tabId }, '1.3');
-
-    // Check if page is actually scrollable and get dimensions
-    const [pageInfo] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        const original = { x: window.scrollX, y: window.scrollY };
-        window.scrollTo(0, 0);
-
-        // Check if the page itself scrolls (not just internal divs)
-        const scrollHeight = Math.max(
+async function getPageDimensions(tabId: number): Promise<PageDimensions> {
+  const [pageInfo] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      return {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        documentHeight: Math.max(
           document.documentElement.scrollHeight,
           document.body.scrollHeight
-        );
-        const clientHeight = Math.max(
-          document.documentElement.clientHeight,
-          document.body.clientHeight,
-          window.innerHeight
-        );
-
-        // Page is scrollable if scrollHeight is significantly larger than viewport
-        // Use 100px threshold to ignore minor differences from scrollbars, borders, etc.
-        const isPageScrollable = scrollHeight > clientHeight + 100;
-
-        return {
-          original,
-          isPageScrollable,
-          scrollHeight,
-          clientHeight,
-          viewportWidth: window.innerWidth,
-          viewportHeight: window.innerHeight
-        };
-      }
-    });
-    const pageData = pageInfo.result as {
-      original: { x: number; y: number };
-      isPageScrollable: boolean;
-      scrollHeight: number;
-      clientHeight: number;
-      viewportWidth: number;
-      viewportHeight: number;
-    };
-
-    // Wait for scroll and layout to settle (100ms)
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Get layout metrics from Chrome DevTools Protocol
-    const layoutMetrics = await chrome.debugger.sendCommand(
-      { tabId },
-      'Page.getLayoutMetrics'
-    ) as any;
-
-    let captureWidth: number, captureHeight: number, captureBeyondViewport: boolean;
-
-    if (pageData.isPageScrollable) {
-      // Page scrolls - capture full content with cap
-      const contentWidth = layoutMetrics.contentSize.width;
-      const contentHeight = layoutMetrics.contentSize.height;
-      const maxReasonableHeight = pageData.viewportHeight * 5;
-
-      captureWidth = contentWidth;
-      captureHeight = Math.min(contentHeight, maxReasonableHeight);
-      captureBeyondViewport = true;
-    } else {
-      // Fixed viewport (internal scrolling only) - use body dimensions
-      const [dimensions] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const bodyRect = document.body.getBoundingClientRect();
-
-          return {
-            width: document.documentElement.clientWidth,
-            bodyHeight: bodyRect.height
-          };
-        }
-      });
-
-      const dims = dimensions.result as {
-        width: number;
-        bodyHeight: number;
+        )
       };
-
-      // Use body height for fixed viewports
-      captureWidth = dims.width;
-      captureHeight = dims.bodyHeight;
-      captureBeyondViewport = false;
     }
+  });
 
+  const pageData = pageInfo.result as {
+    viewportWidth: number;
+    viewportHeight: number;
+    documentHeight: number;
+  };
 
-    // Capture screenshot with the proper dimensions
+  // Get layout metrics from Chrome DevTools Protocol
+  const layoutMetrics = await chrome.debugger.sendCommand(
+    { tabId },
+    'Page.getLayoutMetrics'
+  ) as any;
+
+  const contentHeight = layoutMetrics.contentSize.height;
+
+  // Page is scrollable if document is taller than viewport
+  const isPageScrollable = pageData.documentHeight > pageData.viewportHeight + 100;
+
+  // Detect mobile emulation: significant mismatch between JS documentHeight and DevTools contentHeight
+  // In mobile emulation, these values diverge significantly (often by 2x or more)
+  const heightRatio = contentHeight / pageData.documentHeight;
+  const isMobileEmulation = heightRatio > 1.5 || heightRatio < 0.67;
+
+  return {
+    ...pageData,
+    isPageScrollable,
+    isMobileEmulation,
+    contentHeight
+  };
+}
+
+interface CapturedChunk {
+  data: string;
+  scrollY: number;
+}
+
+/**
+ * Capture full page using scroll-and-stitch for mobile emulation
+ */
+async function captureFullPageWithStitch(
+  tabId: number,
+  dims: PageDimensions
+): Promise<string> {
+  const { viewportWidth, documentHeight } = dims;
+  const chunks: CapturedChunk[] = [];
+
+  // First capture to determine actual bitmap dimensions
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.scrollTo(0, 0)
+  });
+  await new Promise(r => setTimeout(r, 150));
+
+  const firstResult = await chrome.debugger.sendCommand(
+    { tabId },
+    'Page.captureScreenshot',
+    { format: 'png', captureBeyondViewport: false }
+  ) as { data: string };
+
+  const firstBlob = await fetch(`data:image/png;base64,${firstResult.data}`).then(r => r.blob());
+  const firstBitmap = await createImageBitmap(firstBlob);
+  const bitmapWidth = firstBitmap.width;
+  const bitmapHeight = firstBitmap.height;
+  const scale = bitmapWidth / viewportWidth;
+  const capturedCSSHeight = bitmapHeight / scale; // Actual CSS pixels captured per screenshot
+
+  chunks.push({ data: firstResult.data, scrollY: 0 });
+  firstBitmap.close();
+
+  // Keep capturing until we've covered the entire document
+  let lastCapturedBottom = capturedCSSHeight; // First chunk covers 0 to capturedCSSHeight
+  let prevScrollY = -1; // Track previous scroll to detect when we can't scroll further
+
+  while (lastCapturedBottom < documentHeight) {
+    // Calculate next scroll position to avoid gaps
+    const targetY = lastCapturedBottom;
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (y: number) => window.scrollTo(0, y),
+      args: [targetY]
+    });
+
+    await new Promise(r => setTimeout(r, 150));
+
+    const [scrollCheck] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => window.scrollY
+    });
+    const actualScrollY = scrollCheck.result as number;
+
+    // Check if we're stuck at the same scroll position (can't scroll further)
+    if (actualScrollY === prevScrollY) {
+      break;
+    }
+    prevScrollY = actualScrollY;
+
     const result = await chrome.debugger.sendCommand(
       { tabId },
       'Page.captureScreenshot',
-      {
-        format: 'png',
-        captureBeyondViewport: captureBeyondViewport,
-        clip: {
-          x: 0,
-          y: 0,
-          width: captureWidth,
-          height: captureHeight,
-          scale: 1
-        }
-      }
+      { format: 'png', captureBeyondViewport: false }
     ) as { data: string };
 
-    // Restore original scroll position
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (scroll: { x: number; y: number }) => {
-        window.scrollTo(scroll.x, scroll.y);
-      },
-      args: [pageData.original]
-    });
+    chunks.push({ data: result.data, scrollY: actualScrollY });
 
-    // Detach debugger
-    await chrome.debugger.detach({ tabId });
-
-    return result.data; // base64 PNG
-  } catch (error) {
-    console.error('Screenshot capture failed:', error);
-    // Try to detach debugger on error
-    try {
-      await chrome.debugger.detach({ tabId });
-    } catch {
-      // Ignore detach errors
-    }
-    throw error;
+    // Update how far we've captured
+    lastCapturedBottom = actualScrollY + capturedCSSHeight;
   }
+
+  // Scroll back to top
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.scrollTo(0, 0)
+  });
+
+  // If only one chunk, return it directly
+  if (chunks.length === 1) {
+    return chunks[0].data;
+  }
+
+  // Create canvas at full resolution
+  const canvasHeight = Math.round(documentHeight * scale);
+  const canvas = new OffscreenCanvas(bitmapWidth, canvasHeight);
+  const ctx = canvas.getContext('2d')!;
+
+  // Draw all chunks at their scroll positions
+  for (let i = 0; i < chunks.length; i++) {
+    const blob = await fetch(`data:image/png;base64,${chunks[i].data}`).then(r => r.blob());
+    const bitmap = await createImageBitmap(blob);
+
+    let drawY: number;
+    if (i === chunks.length - 1) {
+      // Last chunk: align to bottom of canvas to ensure we capture the document bottom
+      drawY = canvasHeight - bitmap.height;
+    } else {
+      drawY = Math.round(chunks[i].scrollY * scale);
+    }
+
+    ctx.drawImage(bitmap, 0, drawY);
+    bitmap.close();
+  }
+
+  // Convert to base64
+  const stitchedBlob = await canvas.convertToBlob({ type: 'image/png' });
+  const arrayBuffer = await stitchedBlob.arrayBuffer();
+  const uint8Array = new Uint8Array(arrayBuffer);
+  let binary = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    binary += String.fromCharCode(uint8Array[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Capture screenshot - uses stitch method for mobile emulation
+ */
+async function captureScreenshot(
+  tabId: number,
+  dims: PageDimensions
+): Promise<string> {
+  if (dims.isMobileEmulation && dims.isPageScrollable) {
+    // Mobile emulation - use scroll-and-stitch
+    return captureFullPageWithStitch(tabId, dims);
+  }
+
+  // Regular capture with captureBeyondViewport
+  const captureHeight = dims.isPageScrollable
+    ? Math.min(dims.contentHeight, dims.viewportHeight * 5)
+    : dims.documentHeight;
+
+  const result = await chrome.debugger.sendCommand(
+    { tabId },
+    'Page.captureScreenshot',
+    {
+      format: 'png',
+      captureBeyondViewport: true,
+      clip: {
+        x: 0,
+        y: 0,
+        width: dims.viewportWidth,
+        height: captureHeight,
+        scale: 1
+      }
+    }
+  ) as { data: string };
+
+  return result.data;
+}
+
+/**
+ * Clean up after full-page capture
+ */
+async function finishFullPageCapture(tabId: number): Promise<void> {
+  await chrome.debugger.detach({ tabId });
 }
 
 /**
@@ -355,11 +440,42 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       // Ignore if xray script not injected
     }
 
-    // Capture screenshot
-    const screenshotBase64 = await captureFullPageScreenshot(tabId);
+    // Scroll to top FIRST
+    const [scrollInfo] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const original = { x: window.scrollX, y: window.scrollY };
+        window.scrollTo(0, 0);
+        return original;
+      }
+    });
+    const originalScroll = scrollInfo.result as { x: number; y: number };
 
-    // Extract metadata
+    // Wait for scroll to settle
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Attach debugger and get page dimensions
+    await chrome.debugger.attach({ tabId }, '1.3');
+
+    const dims = await getPageDimensions(tabId);
+
+    // Extract metadata (extractor now handles elements below viewport)
     const extractionResult = await extractPageMetadata(tabId);
+
+    // Capture screenshot (uses scroll-and-stitch for mobile emulation)
+    const screenshotBase64 = await captureScreenshot(tabId, dims);
+
+    // Clean up debugger
+    await finishFullPageCapture(tabId);
+
+    // Restore original scroll position
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (scroll: { x: number; y: number }) => {
+        window.scrollTo(scroll.x, scroll.y);
+      },
+      args: [originalScroll]
+    });
 
     // Note: X-ray will be restored by cart.js after successful capture
     // with updated match colors (green/red)
@@ -442,6 +558,12 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
     };
 
     return pageData;
+  } catch (error) {
+    // Clean up debugger on error
+    try {
+      await chrome.debugger.detach({ tabId });
+    } catch { /* ignore */ }
+    throw error;
   } finally {
     captureState.isCapturing = false;
     captureState.currentTabId = null;
@@ -761,43 +883,25 @@ const URL_REWRITE_RULE_ID_BASE = 1000;
 
 // Set up URL interception using declarativeNetRequest
 async function setupURLInterception(): Promise<{ success: boolean; error?: string }> {
-  console.log('[URL Rewrite] setupURLInterception called', {
-    rulesCount: urlRewriteRules.length,
-    sidePanelOpen,
-    rules: urlRewriteRules
-  });
-
   try {
     // Check if declarativeNetRequest is available
     if (!chrome.declarativeNetRequest) {
-      const errorMsg = 'declarativeNetRequest API not available (may be blocked by IT policy)';
-      console.error('[URL Rewrite] ERROR:', errorMsg);
-      return { success: false, error: errorMsg };
+      return { success: false, error: 'declarativeNetRequest API not available' };
     }
 
     // Only add rules if we have rules AND the side panel is open
     if (urlRewriteRules.length > 0 && sidePanelOpen) {
-      console.log('[URL Rewrite] Converting rules to declarativeNetRequest format...');
-
       // Convert our rules to declarativeNetRequest format
       const dynamicRules: chrome.declarativeNetRequest.Rule[] = urlRewriteRules.map((rule, index) => {
         return convertToDeclarativeRule(rule, URL_REWRITE_RULE_ID_BASE + index);
       });
-
-      console.log('[URL Rewrite] Registering dynamic rules:', dynamicRules);
 
       // Update dynamic rules (remove old ones, add new ones)
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: dynamicRules.map(r => r.id),
         addRules: dynamicRules
       });
-
-      // Verify rules were registered
-      const registeredRules = await chrome.declarativeNetRequest.getDynamicRules();
-      console.log('[URL Rewrite] Successfully registered rules. Active dynamic rules:', registeredRules);
     } else {
-      console.log('[URL Rewrite] Removing URL rewrite rules (panel closed or no rules)');
-
       // Remove all URL rewrite rules when panel is closed or no rules configured
       const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
       const rewriteRuleIds = existingRules
@@ -805,23 +909,14 @@ async function setupURLInterception(): Promise<{ success: boolean; error?: strin
         .map(r => r.id);
 
       if (rewriteRuleIds.length > 0) {
-        console.log('[URL Rewrite] Removing rule IDs:', rewriteRuleIds);
         await chrome.declarativeNetRequest.updateDynamicRules({
           removeRuleIds: rewriteRuleIds
         });
-        console.log('[URL Rewrite] Rules removed successfully');
-      } else {
-        console.log('[URL Rewrite] No rules to remove');
       }
     }
     return { success: true };
   } catch (error) {
     const errorMsg = (error as Error).message;
-    console.error('[URL Rewrite] FAILED to set up URL interception:', error);
-    console.error('[URL Rewrite] Error details:', {
-      message: errorMsg,
-      stack: (error as Error).stack
-    });
     return { success: false, error: errorMsg };
   }
 }
@@ -866,14 +961,6 @@ function convertToDeclarativeRule(
 
   // Substitution: keep before, add suffix to captured value, keep after
   const regexSubstitution = `\\1\\2${rule.suffix}\\3`;
-
-  console.log('[URL Rewrite] Converted rule:', {
-    id: ruleId,
-    input: rule.urlRegex,
-    suffix: rule.suffix,
-    regexFilter,
-    regexSubstitution
-  });
 
   return {
     id: ruleId,

@@ -298,12 +298,24 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
 
 // Update overlay positions with new segment coordinates
 function updateOverlayPositions(newSegments: Segment[]): void {
-  // Preserve matched status from current segments by matching on GUID
-  const segmentsWithMatchStatus = newSegments.map((seg) => {
-    // Try to find matching segment by GUID
-    const matchingSegment = currentSegments.find(current =>
+  // Preserve matched status from current segments using multiple matching strategies
+  const segmentsWithMatchStatus = newSegments.map((seg, index) => {
+    // Strategy 1: Match by GUID if both have it
+    let matchingSegment = currentSegments.find(current =>
       seg.g && current.g && seg.g === current.g
     );
+
+    // Strategy 2: Match by text content if GUID match failed
+    if (!matchingSegment) {
+      matchingSegment = currentSegments.find(current =>
+        current.text === seg.text
+      );
+    }
+
+    // Strategy 3: Match by index if same number of segments
+    if (!matchingSegment && currentSegments.length === newSegments.length) {
+      matchingSegment = currentSegments[index];
+    }
 
     return {
       ...seg,
