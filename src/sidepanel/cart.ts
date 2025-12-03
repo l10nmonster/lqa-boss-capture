@@ -70,6 +70,7 @@ class CartManager {
   private currentTab: chrome.tabs.Tab | null = null;
   private port: chrome.runtime.Port | null = null;
   private currentSegmentCount: number = 0;
+  private tmEndpointConfigured: boolean = false;
 
   constructor() {
     this.init();
@@ -119,6 +120,16 @@ class CartManager {
       }
     });
 
+    // Check TM endpoint configuration
+    await this.updateTMEndpointStatus();
+
+    // Listen for storage changes (settings updates)
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace === 'sync' && changes.lqaboss_settings) {
+        this.updateTMEndpointStatus();
+      }
+    });
+
     // Update UI
     this.render();
 
@@ -143,6 +154,34 @@ class CartManager {
   private async updateCurrentTab(): Promise<void> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     this.currentTab = tab;
+  }
+
+  private async updateTMEndpointStatus(): Promise<void> {
+    try {
+      const result = await chrome.storage.sync.get('lqaboss_settings');
+      const settings = result.lqaboss_settings || {};
+      this.tmEndpointConfigured = Boolean(settings.tmEndpointUrl && settings.tmEndpointUrl.trim());
+      this.updateCaptureButtonState();
+    } catch {
+      this.tmEndpointConfigured = false;
+      this.updateCaptureButtonState();
+    }
+  }
+
+  private updateCaptureButtonState(): void {
+    const captureBtn = document.getElementById('capture-btn') as HTMLButtonElement;
+    if (!captureBtn) return;
+
+    if (!this.tmEndpointConfigured) {
+      captureBtn.disabled = true;
+      captureBtn.title = 'Configure TM Lookup URL in settings to enable capture';
+    } else if (this.currentSegmentCount === 0) {
+      captureBtn.disabled = true;
+      captureBtn.title = 'No segments detected on this page';
+    } else {
+      captureBtn.disabled = false;
+      captureBtn.title = '';
+    }
   }
 
   private setupEventListeners(): void {
@@ -276,8 +315,8 @@ class CartManager {
       await this.enableXRay();
     } finally {
       // Restore button state
-      captureBtn.disabled = false;
       captureBtn.textContent = originalText;
+      this.updateCaptureButtonState();
     }
   }
 
@@ -417,11 +456,8 @@ class CartManager {
       countEl.textContent = count.toString();
     }
 
-    // Enable/disable capture button based on segment count
-    const captureBtn = document.getElementById('capture-btn') as HTMLButtonElement;
-    if (captureBtn) {
-      captureBtn.disabled = count === 0;
-    }
+    // Update capture button state (considers both segment count and TM endpoint)
+    this.updateCaptureButtonState();
   }
 
   private async clearCart(): Promise<void> {
