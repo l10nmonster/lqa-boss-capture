@@ -1,3 +1,15 @@
+# [2.1.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.3...v2.1.0) (2025-12-03)
+
+
+### Bug Fixes
+
+* Don't capture pages without matched TUs ([53d3b59](https://github.com/l10nmonster/lqa-boss-capture/commit/53d3b59826f1112fa9fb3dd860754e51c7792773))
+
+
+### Features
+
+* Support Chrome Device Toolbar ([bd0a0c1](https://github.com/l10nmonster/lqa-boss-capture/commit/bd0a0c173757078b0cb18bbd14f5080560766917))
+
 ## [2.0.3](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.2...v2.0.3) (2025-11-25)
 
 
