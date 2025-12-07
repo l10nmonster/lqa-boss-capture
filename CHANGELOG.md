@@ -1,3 +1,10 @@
+## [2.1.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.1.0...v2.1.1) (2025-12-07)
+
+
+### Bug Fixes
+
+* Improve screenshots with normalized coordinates ([c0f78fb](https://github.com/l10nmonster/lqa-boss-capture/commit/c0f78fb64f4b3cd439102fe2ca96b8731ba1b5d7))
+
 # [2.1.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.0.3...v2.1.0) (2025-12-03)
 
 

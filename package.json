@@ -1,6 +1,6 @@
 {
   "name": "lqa-boss-capture",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Chrome extension for LQA Boss - Capture web pages with screenshots and translation metadata for LQA review",
   "scripts": {
     "setup": "npm install && npm run copy-deps",
