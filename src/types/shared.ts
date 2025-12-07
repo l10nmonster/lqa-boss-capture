@@ -65,6 +65,10 @@ export interface CapturedPage {
   imageFile?: string;  // Set when creating flow metadata (filename)
   screenshotBase64?: string; // Temporary during capture (base64 data)
   segments: Segment[];
+  // Coordinate system info for proper overlay positioning
+  viewportWidth?: number;   // CSS viewport width used for coordinate calculation
+  documentHeight?: number;  // CSS document height (full page)
+  screenshotScale?: number; // Ratio: screenshot pixels / CSS pixels
 }
 
 /**

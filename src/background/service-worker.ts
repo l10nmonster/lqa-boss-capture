@@ -176,7 +176,8 @@ interface PageDimensions {
   isMobileEmulation: boolean;
   viewportWidth: number;
   viewportHeight: number;
-  documentHeight: number;
+  documentWidth: number;   // Full scrollable width
+  documentHeight: number;  // Full scrollable height
   contentHeight: number;
 }
 
@@ -190,10 +191,17 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
       return {
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
+        documentWidth: Math.max(
+          document.documentElement.scrollWidth,
+          document.body.scrollWidth
+        ),
         documentHeight: Math.max(
           document.documentElement.scrollHeight,
           document.body.scrollHeight
-        )
+        ),
+        devicePixelRatio: window.devicePixelRatio,
+        screenWidth: window.screen.width,
+        screenHeight: window.screen.height
       };
     }
   });
@@ -201,7 +209,11 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
   const pageData = pageInfo.result as {
     viewportWidth: number;
     viewportHeight: number;
+    documentWidth: number;
     documentHeight: number;
+    devicePixelRatio: number;
+    screenWidth: number;
+    screenHeight: number;
   };
 
   // Get layout metrics from Chrome DevTools Protocol
@@ -211,6 +223,7 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
   ) as any;
 
   const contentHeight = layoutMetrics.contentSize.height;
+  const contentWidth = layoutMetrics.contentSize.width;
 
   // Page is scrollable if document is taller than viewport
   const isPageScrollable = pageData.documentHeight > pageData.viewportHeight + 100;
@@ -221,7 +234,10 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
   const isMobileEmulation = heightRatio > 1.5 || heightRatio < 0.67;
 
   return {
-    ...pageData,
+    viewportWidth: pageData.viewportWidth,
+    viewportHeight: pageData.viewportHeight,
+    documentWidth: pageData.documentWidth,
+    documentHeight: pageData.documentHeight,
     isPageScrollable,
     isMobileEmulation,
     contentHeight
@@ -233,14 +249,19 @@ interface CapturedChunk {
   scrollY: number;
 }
 
+interface ScreenshotResult {
+  data: string;
+  scale: number;  // Actual scale factor (bitmap pixels / CSS pixels)
+}
+
 /**
  * Capture full page using scroll-and-stitch for mobile emulation
  */
 async function captureFullPageWithStitch(
   tabId: number,
   dims: PageDimensions
-): Promise<string> {
-  const { viewportWidth, documentHeight } = dims;
+): Promise<ScreenshotResult> {
+  const { viewportWidth, documentWidth, documentHeight } = dims;
   const chunks: CapturedChunk[] = [];
 
   // First capture to determine actual bitmap dimensions
@@ -314,7 +335,7 @@ async function captureFullPageWithStitch(
 
   // If only one chunk, return it directly
   if (chunks.length === 1) {
-    return chunks[0].data;
+    return { data: chunks[0].data, scale };
   }
 
   // Create canvas at full resolution
@@ -323,17 +344,14 @@ async function captureFullPageWithStitch(
   const ctx = canvas.getContext('2d')!;
 
   // Draw all chunks at their scroll positions
+  // Canvas clips anything beyond bounds automatically
   for (let i = 0; i < chunks.length; i++) {
     const blob = await fetch(`data:image/png;base64,${chunks[i].data}`).then(r => r.blob());
     const bitmap = await createImageBitmap(blob);
 
-    let drawY: number;
-    if (i === chunks.length - 1) {
-      // Last chunk: align to bottom of canvas to ensure we capture the document bottom
-      drawY = canvasHeight - bitmap.height;
-    } else {
-      drawY = Math.round(chunks[i].scrollY * scale);
-    }
+    // Draw at actual scroll position - don't special-case last chunk
+    // This ensures content aligns with coordinates extracted at scroll=0
+    const drawY = Math.round(chunks[i].scrollY * scale);
 
     ctx.drawImage(bitmap, 0, drawY);
     bitmap.close();
@@ -347,7 +365,7 @@ async function captureFullPageWithStitch(
   for (let i = 0; i < uint8Array.length; i++) {
     binary += String.fromCharCode(uint8Array[i]);
   }
-  return btoa(binary);
+  return { data: btoa(binary), scale };
 }
 
 /**
@@ -356,7 +374,7 @@ async function captureFullPageWithStitch(
 async function captureScreenshot(
   tabId: number,
   dims: PageDimensions
-): Promise<string> {
+): Promise<ScreenshotResult> {
   if (dims.isMobileEmulation && dims.isPageScrollable) {
     // Mobile emulation - use scroll-and-stitch
     return captureFullPageWithStitch(tabId, dims);
@@ -383,7 +401,13 @@ async function captureScreenshot(
     }
   ) as { data: string };
 
-  return result.data;
+  // Decode to get actual image dimensions for scale calculation
+  const blob = await fetch(`data:image/png;base64,${result.data}`).then(r => r.blob());
+  const bitmap = await createImageBitmap(blob);
+  const actualScale = bitmap.width / dims.viewportWidth;
+  bitmap.close();
+
+  return { data: result.data, scale: actualScale };
 }
 
 /**
@@ -463,7 +487,9 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
     const extractionResult = await extractPageMetadata(tabId);
 
     // Capture screenshot (uses scroll-and-stitch for mobile emulation)
-    const screenshotBase64 = await captureScreenshot(tabId, dims);
+    const screenshotResult = await captureScreenshot(tabId, dims);
+    const screenshotBase64 = screenshotResult.data;
+    const screenshotScale = screenshotResult.scale;
 
     // Clean up debugger
     await finishFullPageCapture(tabId);
@@ -550,7 +576,14 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       title: tab.title!,
       timestamp: new Date().toISOString(),
       screenshotBase64,
-      segments: segmentsWithMatches,
+      segments: segmentsWithMatches,  // CSS pixel coordinates for X-ray overlay
+      // Store capture info for normalization and debugging
+      viewportWidth: dims.viewportWidth,
+      viewportHeight: dims.viewportHeight,
+      documentWidth: dims.documentWidth,
+      documentHeight: dims.documentHeight,
+      screenshotScale: screenshotScale,
+      isMobileEmulation: dims.isMobileEmulation,
       matchedTUs: Array.from(matchedTUs.values()),
       matchedCount,
       favicon: tab.favIconUrl,
@@ -674,21 +707,42 @@ async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions
   // Add flow metadata
   const flowMetadata = {
     createdAt: new Date().toISOString(),
-    pages: capturedPages.map((page, index) => ({
-      pageId: page.pageId,
-      originalUrl: page.originalUrl,
-      title: page.title,
-      timestamp: page.timestamp,
-      imageFile: `page_${index + 1}_${page.pageId}.png`,
-      segments: page.segments.map(seg => ({
-        g: seg.g,
-        text: seg.text,
-        x: seg.x,
-        y: seg.y,
-        width: seg.width,
-        height: seg.height
-      }))
-    }))
+    pages: capturedPages.map((page, index) => {
+      // Normalize coordinates from CSS pixels to (0-1) range
+      // Use viewportWidth for X, documentHeight for Y
+      const vw = page.viewportWidth || 1;
+      const dh = page.documentHeight || 1;
+
+      return {
+        pageId: page.pageId,
+        originalUrl: page.originalUrl,
+        title: page.title,
+        timestamp: page.timestamp,
+        imageFile: `page_${index + 1}_${page.pageId}.png`,
+        // Debug info for diagnosing coordinate issues
+        captureInfo: {
+          viewportWidth: page.viewportWidth,
+          viewportHeight: page.viewportHeight,
+          documentWidth: page.documentWidth,
+          documentHeight: page.documentHeight,
+          screenshotScale: page.screenshotScale,
+          isMobileEmulation: page.isMobileEmulation,
+          hasHorizontalOverflow: (page.documentWidth || 0) > (page.viewportWidth || 0),
+          // Calculated screenshot dimensions (CSS dims * scale)
+          screenshotPixelWidth: Math.round((page.viewportWidth || 0) * (page.screenshotScale || 1)),
+          screenshotPixelHeight: Math.round((page.documentHeight || 0) * (page.screenshotScale || 1)),
+        },
+        // Segment coordinates normalized to (0-1) - PWA multiplies by display dimensions
+        segments: page.segments.map(seg => ({
+          g: seg.g,
+          text: seg.text,
+          x: seg.x / vw,
+          y: seg.y / dh,
+          width: seg.width / vw,
+          height: seg.height / dh
+        }))
+      };
+    })
   };
 
   zip.file('flow_metadata.json', JSON.stringify(flowMetadata, null, 2));
