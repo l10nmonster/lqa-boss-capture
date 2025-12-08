@@ -71,6 +71,8 @@ class CartManager {
   private port: chrome.runtime.Port | null = null;
   private currentSegmentCount: number = 0;
   private tmEndpointConfigured: boolean = false;
+  // Track user preference for X-ray (false means user manually disabled it)
+  private xrayUserEnabled: boolean = true;
 
   constructor() {
     this.init();
@@ -89,7 +91,10 @@ class CartManager {
     this.port.onMessage.addListener(async (msg: RuntimeMessage) => {
       if (msg.action === 'page-reloaded') {
         await this.updateCurrentTab();
-        await this.enableXRay();
+        // Only re-enable X-ray if user hasn't manually disabled it
+        if (this.xrayUserEnabled) {
+          await this.enableXRay();
+        }
       }
     });
 
@@ -118,7 +123,9 @@ class CartManager {
       if (request.action === 'segment-count-updated') {
         this.updateSegmentCount((request as any).count);
       } else if (request.action === 'xray-state-changed') {
-        this.updateXrayCheckbox((request as any).enabled);
+        const enabled = (request as any).enabled;
+        this.xrayUserEnabled = enabled;
+        this.updateXrayCheckbox(enabled);
       }
     });
 
@@ -434,16 +441,25 @@ class CartManager {
   }
 
   private async setXrayEnabled(enabled: boolean): Promise<void> {
-    try {
-      if (!this.currentTab) return;
+    this.xrayUserEnabled = enabled;
 
-      const message: RuntimeMessage = {
-        action: 'setXrayEnabled',
-        enabled: enabled
-      };
-      await chrome.tabs.sendMessage(this.currentTab.id!, message);
-    } catch {
-      // Silently fail - content script may not be injected
+    if (enabled) {
+      // Re-extract segments when enabling X-ray
+      // This handles cases where page content changed (modals, dynamic content)
+      await this.enableXRay();
+    } else {
+      // Just disable X-ray without re-extraction
+      try {
+        if (!this.currentTab) return;
+
+        const message: RuntimeMessage = {
+          action: 'setXrayEnabled',
+          enabled: false
+        };
+        await chrome.tabs.sendMessage(this.currentTab.id!, message);
+      } catch {
+        // Silently fail - content script may not be injected
+      }
     }
   }
 
