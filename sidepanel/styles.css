@@ -130,6 +130,28 @@ body {
   font-size: 14px;
 }
 
+.xray-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--gray-300);
+}
+
+.xray-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.xray-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-700);
+}
+
 /* Cart */
 .cart {
   flex: 1;

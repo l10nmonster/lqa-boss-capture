@@ -1153,4 +1153,17 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
   return true; // Keep message channel open for async response
 });
 
+// Handle keyboard shortcut commands
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command === 'toggle-xray') {
+    // Send toggle message to the active tab's content script
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      chrome.tabs.sendMessage(tab.id, { action: 'toggleXray' }).catch(() => {
+        // Content script may not be injected - ignore error
+      });
+    }
+  }
+});
+
 export {};

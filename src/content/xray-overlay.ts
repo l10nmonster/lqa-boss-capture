@@ -29,6 +29,19 @@ const XRAY_STYLE_ID = 'lqaboss-xray-styles';
 // Track current state for temporary hide/restore
 let currentSegments: Segment[] = [];
 let isCurrentlyVisible = false;
+// User preference - when false, X-ray stays hidden even after scroll/resize
+let xrayUserEnabled = true;
+
+// Helper to notify side panel of X-ray state changes
+function notifySidePanelXrayState(enabled: boolean): void {
+  const message: RuntimeMessage = {
+    action: 'xray-state-changed',
+    enabled: enabled
+  };
+  chrome.runtime.sendMessage(message).catch(() => {
+    // Ignore if side panel is not open
+  });
+}
 
 // Helper to notify side panel of segment count changes
 function notifySidePanelSegmentCount(count: number): void {
@@ -280,7 +293,29 @@ function toggleXRayVision(enabled: boolean, segments: Segment[] = []): void {
 // Listen for messages from background/side panel
 chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendResponse) => {
   if (request.action === 'toggle-xray') {
+    // Side panel enable/disable - also sets user preference
+    xrayUserEnabled = request.enabled || false;
     toggleXRayVision(request.enabled || false, request.segments || []);
+    notifySidePanelXrayState(xrayUserEnabled);
+  } else if (request.action === 'toggleXray') {
+    // Keyboard shortcut toggle - toggle user preference
+    xrayUserEnabled = !xrayUserEnabled;
+    const overlay = document.getElementById(XRAY_OVERLAY_ID);
+    if (overlay) {
+      overlay.style.display = xrayUserEnabled ? '' : 'none';
+    }
+    notifySidePanelXrayState(xrayUserEnabled);
+    sendResponse({ success: true });
+    return true;
+  } else if (request.action === 'setXrayEnabled') {
+    // Checkbox toggle from side panel
+    xrayUserEnabled = request.enabled || false;
+    const overlay = document.getElementById(XRAY_OVERLAY_ID);
+    if (overlay) {
+      overlay.style.display = xrayUserEnabled ? '' : 'none';
+    }
+    sendResponse({ success: true });
+    return true;
   } else if (request.action === 'hide-xray-temporarily') {
     const wasVisible = isCurrentlyVisible;
     if (wasVisible) removeOverlay();
@@ -334,18 +369,19 @@ function updateOverlayPositions(newSegments: Segment[]): void {
 // Listen for window resize and update positions
 let resizeTimeout: number | undefined;
 window.addEventListener('resize', () => {
-  if (!isCurrentlyVisible) return;
+  if (!isCurrentlyVisible || !xrayUserEnabled) return;
 
   clearTimeout(resizeTimeout);
   resizeTimeout = window.setTimeout(() => {
-    if (!isCurrentlyVisible || !(window as any).LQABOSS_extractTextAndMetadata) return;
+    if (!isCurrentlyVisible || !xrayUserEnabled || !(window as any).LQABOSS_extractTextAndMetadata) return;
 
     const overlay = document.getElementById(XRAY_OVERLAY_ID);
     if (!overlay) return;
 
     overlay.style.display = 'none';
     const result = (window as any).LQABOSS_extractTextAndMetadata();
-    overlay.style.display = '';
+    // Restore display only if user still wants X-ray enabled
+    overlay.style.display = xrayUserEnabled ? '' : 'none';
 
     if (result?.textElements) {
       updateOverlayPositions(result.textElements);
@@ -356,7 +392,7 @@ window.addEventListener('resize', () => {
 // Listen for scroll events (including from scrollable containers)
 let scrollTimeout: number | undefined;
 document.addEventListener('scroll', () => {
-  if (!isCurrentlyVisible) return;
+  if (!isCurrentlyVisible || !xrayUserEnabled) return;
 
   const overlay = document.getElementById(XRAY_OVERLAY_ID);
   if (!overlay) return;
@@ -365,43 +401,20 @@ document.addEventListener('scroll', () => {
 
   clearTimeout(scrollTimeout);
   scrollTimeout = window.setTimeout(() => {
-    if (!isCurrentlyVisible || !(window as any).LQABOSS_extractTextAndMetadata) return;
+    if (!isCurrentlyVisible || !xrayUserEnabled || !(window as any).LQABOSS_extractTextAndMetadata) return;
 
     const result = (window as any).LQABOSS_extractTextAndMetadata();
 
     if (result?.textElements) {
       updateOverlayPositions(result.textElements);
+      // Ensure overlay respects user preference after update
+      const updatedOverlay = document.getElementById(XRAY_OVERLAY_ID);
+      if (updatedOverlay) {
+        updatedOverlay.style.display = xrayUserEnabled ? '' : 'none';
+      }
     }
   }, 100);
 }, true);
 
-// Shift-hold to temporarily hide X-ray
-let shiftHeldDown = false;
-let _savedSegmentsForShift: Segment[] = [];
-
-function handleShiftState(e: KeyboardEvent): void {
-  if (!isCurrentlyVisible) return;
-
-  // Check if ONLY Shift is currently pressed (no other modifiers)
-  const onlyShiftPressed = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey;
-
-  const overlay = document.getElementById(XRAY_OVERLAY_ID);
-  if (!overlay) return;
-
-  if (onlyShiftPressed && !shiftHeldDown) {
-    // Hide overlay
-    shiftHeldDown = true;
-    _savedSegmentsForShift = [...currentSegments];
-    overlay.style.display = 'none';
-  } else if (!onlyShiftPressed && shiftHeldDown) {
-    // Restore overlay
-    overlay.style.display = '';
-    shiftHeldDown = false;
-    _savedSegmentsForShift = [];
-  }
-}
-
-window.addEventListener('keydown', handleShiftState);
-window.addEventListener('keyup', handleShiftState);
 
 } // End guard against multiple injections

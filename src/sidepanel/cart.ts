@@ -113,10 +113,12 @@ class CartManager {
     // Setup event listeners
     this.setupEventListeners();
 
-    // Listen for messages from content scripts
+    // Listen for messages from content scripts and background
     chrome.runtime.onMessage.addListener((request: RuntimeMessage, _sender, _sendResponse) => {
       if (request.action === 'segment-count-updated') {
         this.updateSegmentCount((request as any).count);
+      } else if (request.action === 'xray-state-changed') {
+        this.updateXrayCheckbox((request as any).enabled);
       }
     });
 
@@ -204,6 +206,14 @@ class CartManager {
     document.getElementById('download-btn')?.addEventListener('click', async () => {
       await this.downloadZIP();
     });
+
+    // X-Ray checkbox toggle
+    const xrayCheckbox = document.getElementById('xray-checkbox') as HTMLInputElement;
+    if (xrayCheckbox) {
+      xrayCheckbox.addEventListener('change', async () => {
+        await this.setXrayEnabled(xrayCheckbox.checked);
+      });
+    }
 
     // Listen for tab changes - disable X-ray and re-enable for new tab
     chrome.tabs.onActivated.addListener(async () => {
@@ -420,6 +430,27 @@ class CartManager {
       await chrome.tabs.sendMessage(this.currentTab.id!, message);
     } catch {
       // Silently fail - tab may have been closed or navigated away
+    }
+  }
+
+  private async setXrayEnabled(enabled: boolean): Promise<void> {
+    try {
+      if (!this.currentTab) return;
+
+      const message: RuntimeMessage = {
+        action: 'setXrayEnabled',
+        enabled: enabled
+      };
+      await chrome.tabs.sendMessage(this.currentTab.id!, message);
+    } catch {
+      // Silently fail - content script may not be injected
+    }
+  }
+
+  private updateXrayCheckbox(enabled: boolean): void {
+    const checkbox = document.getElementById('xray-checkbox') as HTMLInputElement;
+    if (checkbox) {
+      checkbox.checked = enabled;
     }
   }
 

@@ -9,7 +9,8 @@
       "Bash(/Users/dlagunas/diegone/lqa-boss-capture/.gitignore)",
       "Bash(npm run build)",
       "Bash(npm run package:*)",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
