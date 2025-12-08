@@ -375,8 +375,10 @@ async function captureScreenshot(
   tabId: number,
   dims: PageDimensions
 ): Promise<ScreenshotResult> {
-  if (dims.isMobileEmulation && dims.isPageScrollable) {
-    // Mobile emulation - use scroll-and-stitch
+  if (dims.isMobileEmulation) {
+    // Mobile emulation - always use simple viewport capture
+    // captureBeyondViewport with clip doesn't work correctly in mobile emulation
+    // (coordinates get confused with device pixel ratio)
     return captureFullPageWithStitch(tabId, dims);
   }
 
