@@ -248,8 +248,8 @@ class CartManager {
       this.hideWarningsModal();
     });
 
-    // Close modal when clicking overlay
-    document.querySelector('.modal-overlay')?.addEventListener('click', () => {
+    // Close modal when clicking overlay (warnings modal)
+    document.querySelector('#warnings-modal .modal-overlay')?.addEventListener('click', () => {
       this.hideWarningsModal();
     });
 
@@ -729,9 +729,32 @@ class CartManager {
     cartList.querySelectorAll('.remove-page-btn').forEach((btn, index) => {
       btn.addEventListener('click', async () => await this.removePage(index));
     });
+
+    // Add event listeners for preview tooltips (load image on hover)
+    cartList.querySelectorAll('.preview-trigger').forEach((trigger) => {
+      trigger.addEventListener('mouseenter', (e) => {
+        const index = parseInt((trigger as HTMLElement).dataset.index || '0', 10);
+        const page = this.capturedPages[index];
+        if (page?.screenshotBase64) {
+          const tooltip = trigger.querySelector('.preview-tooltip') as HTMLElement;
+          const img = trigger.querySelector('.preview-tooltip img') as HTMLImageElement;
+
+          if (img && !img.getAttribute('src')) {
+            img.src = `data:image/png;base64,${page.screenshotBase64}`;
+          }
+
+          // Position the fixed tooltip
+          if (tooltip) {
+            const rect = (trigger as HTMLElement).getBoundingClientRect();
+            tooltip.style.left = `${rect.right + 8}px`;
+            tooltip.style.top = `${Math.max(8, rect.top - 100)}px`;
+          }
+        }
+      });
+    });
   }
 
-  private renderCartItem(page: CapturedPage, _index: number): string {
+  private renderCartItem(page: CapturedPage, index: number): string {
     const segmentCount = page.segments.length;
     const matchedCount = page.matchedCount || 0;
     const timestamp = new Date(page.timestamp).toLocaleTimeString();
@@ -756,6 +779,15 @@ class CartManager {
 
     return `
       <div class="cart-item">
+        <div class="preview-trigger" data-index="${index}">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+          <div class="preview-tooltip">
+            <img alt="">
+          </div>
+        </div>
         <div class="cart-item-content">
           <div class="cart-item-title">${hostname}</div>
           <div class="cart-item-url" title="${page.originalUrl}">${urlPath}</div>
