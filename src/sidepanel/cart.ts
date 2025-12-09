@@ -742,9 +742,24 @@ class CartManager {
       await chrome.storage.local.set({ capturedPages: this.capturedPages });
     } catch (error) {
       const err = error as Error;
-      console.error('[Cart] Storage quota error:', error);
+      console.error('[Cart] Storage error:', error);
       if (err.message?.includes('QuotaBytes') || err.message?.includes('quota')) {
-        this.showStatus('Storage quota exceeded. Try removing some pages.', 'error');
+        // Remove the last added page since we can't store it
+        if (this.capturedPages.length > 0) {
+          this.capturedPages.pop();
+          // Update count display to reflect the actual stored pages
+          const newCount = this.capturedPages.length;
+          if (pageCountEl) {
+            pageCountEl.textContent = newCount.toString();
+          }
+          // Update button states
+          clearBtn.disabled = newCount === 0;
+          sendBtn.disabled = newCount === 0;
+          downloadBtn.disabled = newCount === 0;
+        }
+        this.showStatus('Storage quota exceeded. Page not saved. Try removing some pages first.', 'error');
+        // Don't continue rendering - the previous cart state is still valid
+        return;
       }
     }
 
