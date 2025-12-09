@@ -300,20 +300,54 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
   } else if (request.action === 'toggleXray') {
     // Keyboard shortcut toggle - toggle user preference
     xrayUserEnabled = !xrayUserEnabled;
-    const overlay = document.getElementById(XRAY_OVERLAY_ID);
-    if (overlay) {
-      overlay.style.display = xrayUserEnabled ? '' : 'none';
+
+    if (xrayUserEnabled) {
+      // Re-extract segments when enabling via keyboard shortcut
+      // This handles cases where page content changed (modals, dynamic content)
+      if ((window as any).LQABOSS_extractTextAndMetadata) {
+        const result = (window as any).LQABOSS_extractTextAndMetadata();
+        if (result?.textElements) {
+          updateOverlayPositions(result.textElements);
+          const overlay = document.getElementById(XRAY_OVERLAY_ID);
+          if (overlay) {
+            overlay.style.display = '';
+          }
+        }
+      }
+    } else {
+      // Just hide the overlay
+      const overlay = document.getElementById(XRAY_OVERLAY_ID);
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
     }
+
     notifySidePanelXrayState(xrayUserEnabled);
     sendResponse({ success: true });
     return true;
   } else if (request.action === 'setXrayEnabled') {
     // Checkbox toggle from side panel
     xrayUserEnabled = request.enabled || false;
-    const overlay = document.getElementById(XRAY_OVERLAY_ID);
-    if (overlay) {
-      overlay.style.display = xrayUserEnabled ? '' : 'none';
+
+    if (xrayUserEnabled) {
+      // Re-extract segments when enabling
+      if ((window as any).LQABOSS_extractTextAndMetadata) {
+        const result = (window as any).LQABOSS_extractTextAndMetadata();
+        if (result?.textElements) {
+          updateOverlayPositions(result.textElements);
+          const overlay = document.getElementById(XRAY_OVERLAY_ID);
+          if (overlay) {
+            overlay.style.display = '';
+          }
+        }
+      }
+    } else {
+      const overlay = document.getElementById(XRAY_OVERLAY_ID);
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
     }
+
     sendResponse({ success: true });
     return true;
   } else if (request.action === 'hide-xray-temporarily') {

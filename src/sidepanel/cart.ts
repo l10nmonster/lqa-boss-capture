@@ -95,6 +95,16 @@ class CartManager {
         if (this.xrayUserEnabled) {
           await this.enableXRay();
         }
+      } else if (msg.action === 'keyboard-toggle-xray') {
+        // Alt+X keyboard shortcut - toggle X-ray with full extraction
+        this.xrayUserEnabled = !this.xrayUserEnabled;
+        this.updateXrayCheckbox(this.xrayUserEnabled);
+
+        if (this.xrayUserEnabled) {
+          await this.enableXRay();
+        } else {
+          await this.disableXRay();
+        }
       }
     });
 
