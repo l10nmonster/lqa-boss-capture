@@ -314,7 +314,7 @@ function extractTextAndMetadata(): ExtractionResult {
   if (textElements.length === 0) {
     const bodyText = document.body.innerText;
     const bodyHtml = document.body.innerHTML;
-    console.warn('[Extractor] No segments found:', {
+    const debugInfo = {
       nodesWithMarkers,
       regexMatches: matchCount,
       markersInInnerText: {
@@ -327,7 +327,8 @@ function extractTextAndMetadata(): ExtractionResult {
         ZWNJ: bodyHtml.includes('\u200C'),
         FE00: /[\uFE00-\uFE0F]/.test(bodyHtml)
       }
-    });
+    };
+    console.info('[Extractor] No segments found:', JSON.stringify(debugInfo, null, 2));
   }
 
   return { textElements };
