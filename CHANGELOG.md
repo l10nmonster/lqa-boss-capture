@@ -1,3 +1,12 @@
+## [2.2.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.2.0...v2.2.1) (2025-12-09)
+
+
+### Bug Fixes
+
+* Capture logs showing incorrectly ([bfcfa11](https://github.com/l10nmonster/lqa-boss-capture/commit/bfcfa11cd85a59abfaa15a6b3effbac3959155fd))
+* Expand local storage quota and cap screenshot height ([ce85184](https://github.com/l10nmonster/lqa-boss-capture/commit/ce85184e26d01eafd7c2c06e8e193858c88b8c77))
+* Incorrect cart counter under error condition ([6a4267d](https://github.com/l10nmonster/lqa-boss-capture/commit/6a4267dead66f7aa0dcfecb14f2eddd3952b947b))
+
 # [2.2.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.1.1...v2.2.0) (2025-12-09)
 
 
