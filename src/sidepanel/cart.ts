@@ -414,28 +414,34 @@ class CartManager {
         return;
       }
 
-      // Check if page was already captured
+      // Always extract fresh segments (like scroll behavior)
+      let segments: Segment[] = await this.extractSegments();
+
+      // If no segments found, retry after a short delay (for SPAs that render content dynamically)
+      if (segments.length === 0) {
+        console.log('[Cart] No segments found, retrying in 500ms...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        segments = await this.extractSegments();
+        console.log('[Cart] Retry result:', segments.length, 'segments');
+      }
+
+      // If page was previously captured, preserve matched status (green/red colors)
       const lastPage = this.capturedPages
         .slice()
         .reverse()
         .find(p => p.originalUrl === this.currentTab!.url);
 
-      let segments: Segment[] = [];
-
       if (lastPage) {
-        // Use captured segments
-        segments = lastPage.segments;
-      } else {
-        // Extract metadata on-demand
-        segments = await this.extractSegments();
-
-        // If no segments found, retry after a short delay (for SPAs that render content dynamically)
-        if (segments.length === 0) {
-          console.log('[Cart] No segments found, retrying in 500ms...');
-          await new Promise(resolve => setTimeout(resolve, 500));
-          segments = await this.extractSegments();
-          console.log('[Cart] Retry result:', segments.length, 'segments');
-        }
+        segments = segments.map(seg => {
+          // Find matching captured segment by GUID or text
+          const captured = lastPage.segments.find(c =>
+            (seg.g && c.g && seg.g === c.g) || c.text === seg.text
+          );
+          if (captured?.matched !== undefined) {
+            return { ...seg, matched: captured.matched };
+          }
+          return seg;
+        });
       }
 
       // Update segment count

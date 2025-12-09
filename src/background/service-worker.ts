@@ -491,6 +491,8 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       await chrome.tabs.sendMessage(tabId, {
         action: 'hide-xray-temporarily'
       });
+      // Wait for DOM update to complete
+      await new Promise(resolve => setTimeout(resolve, 50));
     } catch {
       // Ignore if xray script not injected
     }

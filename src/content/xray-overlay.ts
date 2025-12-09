@@ -352,7 +352,10 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
     return true;
   } else if (request.action === 'hide-xray-temporarily') {
     const wasVisible = isCurrentlyVisible;
-    if (wasVisible) removeOverlay();
+    if (wasVisible) {
+      removeOverlay();
+      isCurrentlyVisible = false;  // Prevent scroll/resize/click handlers from recreating overlay
+    }
     sendResponse({ success: true, wasVisible });
     return true;
   } else if (request.action === 'restore-xray') {
