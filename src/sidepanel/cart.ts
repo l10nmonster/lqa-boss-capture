@@ -347,6 +347,29 @@ class CartManager {
     }
   }
 
+  private async extractSegments(): Promise<Segment[]> {
+    if (!this.currentTab?.id) return [];
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: this.currentTab.id },
+        files: ['content/extractor.js']
+      });
+
+      const message: RuntimeMessage = {
+        action: 'extract-metadata'
+      };
+      const response = await chrome.tabs.sendMessage(this.currentTab.id, message) as RuntimeResponse;
+
+      if (response && response.textElements) {
+        return response.textElements;
+      }
+    } catch (error) {
+      console.error('[Cart] Failed to extract segments:', error);
+    }
+    return [];
+  }
+
   private async enableXRay(): Promise<void> {
     try {
       await this.updateCurrentTab();
@@ -397,18 +420,14 @@ class CartManager {
         segments = lastPage.segments;
       } else {
         // Extract metadata on-demand
-        await chrome.scripting.executeScript({
-          target: { tabId: this.currentTab.id! },
-          files: ['content/extractor.js']
-        });
+        segments = await this.extractSegments();
 
-        const message: RuntimeMessage = {
-          action: 'extract-metadata'
-        };
-        const response = await chrome.tabs.sendMessage(this.currentTab.id!, message) as RuntimeResponse;
-
-        if (response && response.textElements) {
-          segments = response.textElements;
+        // If no segments found, retry after a short delay (for SPAs that render content dynamically)
+        if (segments.length === 0) {
+          console.log('[Cart] No segments found, retrying in 500ms...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          segments = await this.extractSegments();
+          console.log('[Cart] Retry result:', segments.length, 'segments');
         }
       }
 
