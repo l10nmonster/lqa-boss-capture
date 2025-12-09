@@ -360,10 +360,12 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
 
 ### TM Endpoint Configuration
 
-**Settings UI** (`sidepanel/index.html:24-52`):
-- TM Lookup URL
+**Main Panel** (`sidepanel/index.html:24-45`):
 - Source Language
 - Target Language
+
+**Settings Modal** (`sidepanel/index.html:148-155`):
+- TM Lookup URL
 
 **Request Format** (POST to TM endpoint):
 ```json
