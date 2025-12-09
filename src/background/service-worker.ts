@@ -271,6 +271,23 @@ interface ScreenshotResult {
 }
 
 /**
+ * Wait for browser to render after scroll using double-requestAnimationFrame.
+ * Two rAF calls ensure the browser has completed at least one paint cycle.
+ */
+async function waitForScrollRender(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => new Promise<void>(resolve => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve());
+      });
+    })
+  });
+  // Small buffer for lazy-loaded content
+  await new Promise(r => setTimeout(r, 50));
+}
+
+/**
  * Capture full page using scroll-and-stitch for mobile emulation
  */
 async function captureFullPageWithStitch(
@@ -287,7 +304,7 @@ async function captureFullPageWithStitch(
     target: { tabId },
     func: () => window.scrollTo(0, 0)
   });
-  await new Promise(r => setTimeout(r, 150));
+  await waitForScrollRender(tabId);
 
   const firstResult = await chrome.debugger.sendCommand(
     { tabId },
@@ -319,7 +336,7 @@ async function captureFullPageWithStitch(
       args: [targetY]
     });
 
-    await new Promise(r => setTimeout(r, 150));
+    await waitForScrollRender(tabId);
 
     const [scrollCheck] = await chrome.scripting.executeScript({
       target: { tabId },
@@ -333,11 +350,27 @@ async function captureFullPageWithStitch(
     }
     prevScrollY = actualScrollY;
 
-    const result = await chrome.debugger.sendCommand(
-      { tabId },
-      'Page.captureScreenshot',
-      { format: 'png', captureBeyondViewport: false }
-    ) as { data: string };
+    // Capture with duplicate detection and retry
+    let result: { data: string };
+    let retries = 0;
+    const maxRetries = 3;
+    const prevData = chunks[chunks.length - 1]?.data;
+
+    do {
+      result = await chrome.debugger.sendCommand(
+        { tabId },
+        'Page.captureScreenshot',
+        { format: 'png', captureBeyondViewport: false }
+      ) as { data: string };
+
+      // If this chunk is identical to the previous one, wait and retry
+      if (prevData && result.data === prevData && retries < maxRetries) {
+        retries++;
+        await new Promise(r => setTimeout(r, 100 * retries)); // Exponential backoff: 100, 200, 300ms
+      } else {
+        break;
+      }
+    } while (retries <= maxRetries);
 
     chunks.push({ data: result.data, scrollY: actualScrollY });
 
@@ -975,6 +1008,42 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
             timestamp: Date.now()
           };
           sendResponse({ success: true });
+          break;
+        }
+
+        case 'lookup-single-segment': {
+          // Single-segment TM lookup from xray overlay modal
+          const segment = request.segment;
+          if (!segment || !segment.g) {
+            sendResponse({ success: false, error: 'No segment GUID' });
+            break;
+          }
+
+          // Get settings
+          const settingsResult = await chrome.storage.sync.get('lqaboss_settings');
+          const lookupSettings: Settings = settingsResult.lqaboss_settings || {};
+
+          if (!lookupSettings.tmEndpointUrl) {
+            sendResponse({ success: false, error: 'TM endpoint not configured' });
+            break;
+          }
+
+          // Fetch TU for this single segment
+          const tmResult = await fetchTUsForSegments([segment], lookupSettings);
+
+          if (tmResult.error) {
+            sendResponse({ success: false, error: tmResult.error });
+            break;
+          }
+
+          // Find the TU matching this segment's GUID
+          const matchingTu = tmResult.tus.find(tu => tu.guid === segment.g);
+
+          if (matchingTu) {
+            sendResponse({ success: true, tu: matchingTu });
+          } else {
+            sendResponse({ success: false, error: 'No TM match found' });
+          }
           break;
         }
 
