@@ -10,7 +10,8 @@
       "Bash(npm run build)",
       "Bash(npm run package:*)",
       "Bash(unzip:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(npm run lint)"
     ],
     "deny": [],
     "ask": []

@@ -101,6 +101,9 @@ let urlRewriteRules: URLRewriteRule[] = [];
 // Pending flow storage for PWA communication
 let pendingFlow: PendingFlow | null = null;
 
+// Maximum screenshot height in CSS pixels (prevents excessive memory usage on infinite scroll pages)
+const MAX_CAPTURE_HEIGHT = 16000;
+
 // Load URL rewrite rules on startup
 chrome.runtime.onStartup.addListener(async () => {
   const result = await chrome.storage.local.get('url_rewrite_rules');
@@ -275,6 +278,8 @@ async function captureFullPageWithStitch(
   dims: PageDimensions
 ): Promise<ScreenshotResult> {
   const { viewportWidth, documentWidth, documentHeight } = dims;
+  // Cap document height to prevent excessive memory usage on infinite scroll pages
+  const cappedHeight = Math.min(documentHeight, MAX_CAPTURE_HEIGHT);
   const chunks: CapturedChunk[] = [];
 
   // First capture to determine actual bitmap dimensions
@@ -304,7 +309,7 @@ async function captureFullPageWithStitch(
   let lastCapturedBottom = capturedCSSHeight; // First chunk covers 0 to capturedCSSHeight
   let prevScrollY = -1; // Track previous scroll to detect when we can't scroll further
 
-  while (lastCapturedBottom < documentHeight) {
+  while (lastCapturedBottom < cappedHeight) {
     // Calculate next scroll position to avoid gaps
     const targetY = lastCapturedBottom;
 
@@ -351,8 +356,8 @@ async function captureFullPageWithStitch(
     return { data: chunks[0].data, scale };
   }
 
-  // Create canvas at full resolution
-  const canvasHeight = Math.round(documentHeight * scale);
+  // Create canvas at full resolution (using capped height)
+  const canvasHeight = Math.round(cappedHeight * scale);
   const canvas = new OffscreenCanvas(bitmapWidth, canvasHeight);
   const ctx = canvas.getContext('2d')!;
 
@@ -411,10 +416,13 @@ async function captureScreenshot(
     return captureFullPageWithStitch(tabId, dims);
   }
 
-  // Regular capture with captureBeyondViewport
-  const captureHeight = dims.isPageScrollable
-    ? Math.min(dims.contentHeight, dims.viewportHeight * 5)
-    : dims.documentHeight;
+  // Regular capture with captureBeyondViewport (cap height to prevent excessive memory usage)
+  const captureHeight = Math.min(
+    dims.isPageScrollable
+      ? Math.min(dims.contentHeight, dims.viewportHeight * 5)
+      : dims.documentHeight,
+    MAX_CAPTURE_HEIGHT
+  );
 
   const result = await chrome.debugger.sendCommand(
     { tabId },

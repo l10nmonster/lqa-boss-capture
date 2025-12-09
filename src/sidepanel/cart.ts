@@ -738,7 +738,15 @@ class CartManager {
     downloadBtn.disabled = !hasPages;
 
     // Sync cart to storage for service worker access
-    await chrome.storage.local.set({ capturedPages: this.capturedPages });
+    try {
+      await chrome.storage.local.set({ capturedPages: this.capturedPages });
+    } catch (error) {
+      const err = error as Error;
+      console.error('[Cart] Storage quota error:', error);
+      if (err.message?.includes('QuotaBytes') || err.message?.includes('quota')) {
+        this.showStatus('Storage quota exceeded. Try removing some pages.', 'error');
+      }
+    }
 
     // Render cart items
     if (!cartList) return;
