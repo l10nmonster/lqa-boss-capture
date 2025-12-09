@@ -351,6 +351,13 @@ class CartManager {
     if (!this.currentTab?.id) return [];
 
     try {
+      // Hide X-ray overlay before extracting to avoid interference with elementFromPoint
+      try {
+        await chrome.tabs.sendMessage(this.currentTab.id, { action: 'hide-xray-temporarily' });
+      } catch {
+        // Overlay might not be injected yet
+      }
+
       await chrome.scripting.executeScript({
         target: { tabId: this.currentTab.id },
         files: ['content/extractor.js']

@@ -428,14 +428,15 @@ let scrollTimeout: number | undefined;
 document.addEventListener('scroll', () => {
   if (!isCurrentlyVisible || !xrayUserEnabled) return;
 
-  const overlay = document.getElementById(XRAY_OVERLAY_ID);
-  if (!overlay) return;
-
-  overlay.style.display = 'none';
-
   clearTimeout(scrollTimeout);
   scrollTimeout = window.setTimeout(() => {
     if (!isCurrentlyVisible || !xrayUserEnabled || !(window as any).LQABOSS_extractTextAndMetadata) return;
+
+    // Hide overlay only briefly during re-extraction
+    const overlay = document.getElementById(XRAY_OVERLAY_ID);
+    if (overlay) {
+      overlay.style.display = 'none';
+    }
 
     const result = (window as any).LQABOSS_extractTextAndMetadata();
 
@@ -447,8 +448,34 @@ document.addEventListener('scroll', () => {
         updatedOverlay.style.display = xrayUserEnabled ? '' : 'none';
       }
     }
-  }, 100);
+  }, 150);
 }, true);
 
+// Listen for click events to re-extract after DOM changes (modals, dropdowns, etc.)
+let clickTimeout: number | undefined;
+document.addEventListener('click', () => {
+  if (!isCurrentlyVisible || !xrayUserEnabled) return;
+
+  // Delay to allow modals/dynamic content to render
+  clearTimeout(clickTimeout);
+  clickTimeout = window.setTimeout(() => {
+    if (!isCurrentlyVisible || !xrayUserEnabled || !(window as any).LQABOSS_extractTextAndMetadata) return;
+
+    const overlay = document.getElementById(XRAY_OVERLAY_ID);
+    if (overlay) {
+      overlay.style.display = 'none';
+    }
+
+    const result = (window as any).LQABOSS_extractTextAndMetadata();
+
+    if (result?.textElements) {
+      updateOverlayPositions(result.textElements);
+      const updatedOverlay = document.getElementById(XRAY_OVERLAY_ID);
+      if (updatedOverlay) {
+        updatedOverlay.style.display = xrayUserEnabled ? '' : 'none';
+      }
+    }
+  }, 300);
+}, true);
 
 } // End guard against multiple injections

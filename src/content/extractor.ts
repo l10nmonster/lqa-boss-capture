@@ -100,45 +100,49 @@ function isRectVisible(rect: DOMRect, parentElement: Element): boolean {
 
   const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
 
-  // Check if element is fully within the visible viewport
-  const isFullyInViewport = rect.top >= 0 && rect.bottom <= viewportHeight &&
-                            rect.left >= 0 && rect.right <= viewportWidth;
+  // Check if element is within the visible viewport (for elementFromPoint check)
+  const isInViewport = rect.top < viewportHeight && rect.bottom > 0 &&
+                       rect.left < viewportWidth && rect.right > 0;
 
-  // Only do elementFromPoint check for elements fully within viewport
-  // Elements at viewport boundaries or outside are trusted if they passed
-  // the overflow clipping checks above
-  if (!isFullyInViewport) {
+  // If element is completely outside viewport, trust it (for full-page screenshots)
+  if (!isInViewport) {
     return true;
   }
 
-  // For elements fully in viewport, check corners with elementFromPoint
-  // to ensure they're not obscured by other elements
+  // For elements in viewport, check center and corners with elementFromPoint
+  // to ensure they're not obscured by other elements (like modals)
   const offset = 2;
-  const corners = [
-    { x: rect.left + offset, y: rect.top + offset },           // Top-left
-    { x: rect.right - offset, y: rect.top + offset },          // Top-right
-    { x: rect.left + offset, y: rect.bottom - offset },        // Bottom-left
-    { x: rect.right - offset, y: rect.bottom - offset }        // Bottom-right
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+
+  // Clamp points to viewport bounds for elementFromPoint
+  const clamp = (val: number, min: number, max: number) => Math.max(min, Math.min(max, val));
+
+  const pointsToCheck = [
+    { x: clamp(centerX, 0, viewportWidth - 1), y: clamp(centerY, 0, viewportHeight - 1) }, // Center
+    { x: clamp(rect.left + offset, 0, viewportWidth - 1), y: clamp(rect.top + offset, 0, viewportHeight - 1) },
+    { x: clamp(rect.right - offset, 0, viewportWidth - 1), y: clamp(rect.bottom - offset, 0, viewportHeight - 1) }
   ];
 
   try {
-    for (const corner of corners) {
-      const elementAtPoint = document.elementFromPoint(corner.x, corner.y);
+    for (const point of pointsToCheck) {
+      const elementAtPoint = document.elementFromPoint(point.x, point.y);
       if (!elementAtPoint) {
-        return false;
+        continue; // Point might be outside document
       }
 
-      // Check if the element at this corner is related to our parent
+      // Check if the element at this point is related to our parent
       const isRelated = elementAtPoint === parentElement ||
                         parentElement.contains(elementAtPoint) ||
                         elementAtPoint.contains(parentElement);
 
-      if (!isRelated) {
-        return false;
+      if (isRelated) {
+        return true; // At least one point is visible
       }
     }
 
-    return true;
+    // None of the points were related to our element - it's obscured
+    return false;
   } catch {
     return false;
   }
@@ -150,6 +154,7 @@ function extractTextAndMetadata(): ExtractionResult {
   const END_MARKER = '\u200C';
 
   if (!document.body) {
+    console.error('[Extractor] Document body not found');
     return { error: 'Document body not found.' };
   }
 
@@ -157,20 +162,31 @@ function extractTextAndMetadata(): ExtractionResult {
 
   let activeSegment: ActiveSegment | null = null;
   let node: Node | null;
+  let nodesWithMarkers = 0;
+  let matchCount = 0;
 
   while ((node = treeWalker.nextNode())) {
     const parentElement = (node as Text).parentElement;
 
     if (parentElement) {
       const styles = window.getComputedStyle(parentElement);
-      if (styles.display === 'none' || styles.visibility === 'hidden' || parseFloat(styles.opacity) === 0) continue;
-      if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'HEAD'].includes(parentElement.tagName)) continue;
+      if (styles.display === 'none' || styles.visibility === 'hidden' || parseFloat(styles.opacity) === 0) {
+        continue;
+      }
+      if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'HEAD'].includes(parentElement.tagName)) {
+        continue;
+      }
     } else {
       continue;
     }
 
     let searchPos = 0;
     const text = node.nodeValue || '';
+
+    // Track if this text node contains any Invisicode markers
+    if (text.includes('\u200B') || text.includes('\u200C') || /[\uFE00-\uFE0F]/.test(text)) {
+      nodesWithMarkers++;
+    }
 
     while (searchPos < text.length) {
       if (activeSegment) {
@@ -230,6 +246,7 @@ function extractTextAndMetadata(): ExtractionResult {
         const match = START_MARKER_REGEX.exec(text);
 
         if (match) {
+          matchCount++;
           const textAfterStart = text.substring(match.index + match[0].length);
           const endMarkerPosInSubstring = textAfterStart.indexOf(END_MARKER);
 
@@ -291,6 +308,26 @@ function extractTextAndMetadata(): ExtractionResult {
         }
       }
     }
+  }
+
+  // Only log when no segments found (for debugging)
+  if (textElements.length === 0) {
+    const bodyText = document.body.innerText;
+    const bodyHtml = document.body.innerHTML;
+    console.warn('[Extractor] No segments found:', {
+      nodesWithMarkers,
+      regexMatches: matchCount,
+      markersInInnerText: {
+        ZWS: bodyText.includes('\u200B'),
+        ZWNJ: bodyText.includes('\u200C'),
+        FE00: /[\uFE00-\uFE0F]/.test(bodyText)
+      },
+      markersInHTML: {
+        ZWS: bodyHtml.includes('\u200B'),
+        ZWNJ: bodyHtml.includes('\u200C'),
+        FE00: /[\uFE00-\uFE0F]/.test(bodyHtml)
+      }
+    });
   }
 
   return { textElements };

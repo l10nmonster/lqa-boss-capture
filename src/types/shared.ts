@@ -66,9 +66,13 @@ export interface CapturedPage {
   screenshotBase64?: string; // Temporary during capture (base64 data)
   segments: Segment[];
   // Coordinate system info for proper overlay positioning
-  viewportWidth?: number;   // CSS viewport width used for coordinate calculation
-  documentHeight?: number;  // CSS document height (full page)
-  screenshotScale?: number; // Ratio: screenshot pixels / CSS pixels
+  viewportWidth?: number;    // CSS viewport width
+  viewportHeight?: number;   // CSS viewport height
+  documentWidth?: number;    // CSS document width (full page)
+  documentHeight?: number;   // CSS document height (full page)
+  screenshotScale?: number;  // Ratio: screenshot pixels / CSS pixels
+  isMobileEmulation?: boolean; // Whether captured in mobile emulation mode
+  isScrollLocked?: boolean;  // Whether scroll was locked (modal open) during capture
 }
 
 /**

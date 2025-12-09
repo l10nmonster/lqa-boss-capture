@@ -174,6 +174,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 interface PageDimensions {
   isPageScrollable: boolean;
   isMobileEmulation: boolean;
+  isScrollLocked: boolean;  // Body/html has overflow:hidden (modal open)
   viewportWidth: number;
   viewportHeight: number;
   documentWidth: number;   // Full scrollable width
@@ -201,7 +202,17 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
         ),
         devicePixelRatio: window.devicePixelRatio,
         screenWidth: window.screen.width,
-        screenHeight: window.screen.height
+        screenHeight: window.screen.height,
+        // Detect if scroll is locked (modal open, etc.)
+        isScrollLocked: (() => {
+          const bodyStyle = window.getComputedStyle(document.body);
+          const htmlStyle = window.getComputedStyle(document.documentElement);
+          const bodyOverflow = bodyStyle.overflow + bodyStyle.overflowY;
+          const htmlOverflow = htmlStyle.overflow + htmlStyle.overflowY;
+          const isOverflowHidden = bodyOverflow.includes('hidden') || htmlOverflow.includes('hidden');
+          const isPositionFixed = bodyStyle.position === 'fixed';
+          return isOverflowHidden || isPositionFixed;
+        })()
       };
     }
   });
@@ -214,6 +225,7 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
     devicePixelRatio: number;
     screenWidth: number;
     screenHeight: number;
+    isScrollLocked: boolean;
   };
 
   // Get layout metrics from Chrome DevTools Protocol
@@ -240,7 +252,8 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
     documentHeight: pageData.documentHeight,
     isPageScrollable,
     isMobileEmulation,
-    contentHeight
+    contentHeight,
+    isScrollLocked: pageData.isScrollLocked
   };
 }
 
@@ -375,6 +388,22 @@ async function captureScreenshot(
   tabId: number,
   dims: PageDimensions
 ): Promise<ScreenshotResult> {
+  // If scroll is locked (modal open), just capture current viewport
+  if (dims.isScrollLocked) {
+    const result = await chrome.debugger.sendCommand(
+      { tabId },
+      'Page.captureScreenshot',
+      { format: 'png', captureBeyondViewport: false }
+    ) as { data: string };
+
+    const blob = await fetch(`data:image/png;base64,${result.data}`).then(r => r.blob());
+    const bitmap = await createImageBitmap(blob);
+    const actualScale = bitmap.width / dims.viewportWidth;
+    bitmap.close();
+
+    return { data: result.data, scale: actualScale };
+  }
+
   if (dims.isMobileEmulation) {
     // Mobile emulation - always use simple viewport capture
     // captureBeyondViewport with clip doesn't work correctly in mobile emulation
@@ -466,24 +495,27 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       // Ignore if xray script not injected
     }
 
-    // Scroll to top FIRST
+    // Get current scroll position first (before attaching debugger)
     const [scrollInfo] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
-        const original = { x: window.scrollX, y: window.scrollY };
-        window.scrollTo(0, 0);
-        return original;
-      }
+      func: () => ({ x: window.scrollX, y: window.scrollY })
     });
     const originalScroll = scrollInfo.result as { x: number; y: number };
 
-    // Wait for scroll to settle
-    await new Promise(resolve => setTimeout(resolve, 50));
-
     // Attach debugger and get page dimensions
     await chrome.debugger.attach({ tabId }, '1.3');
-
     const dims = await getPageDimensions(tabId);
+
+    // Only scroll to top if scroll is NOT locked (no modal)
+    // When scroll is locked, we capture the current viewport as-is
+    if (!dims.isScrollLocked) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => window.scrollTo(0, 0)
+      });
+      // Wait for scroll to settle
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
 
     // Extract metadata (extractor now handles elements below viewport)
     const extractionResult = await extractPageMetadata(tabId);
@@ -496,14 +528,16 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
     // Clean up debugger
     await finishFullPageCapture(tabId);
 
-    // Restore original scroll position
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (scroll: { x: number; y: number }) => {
-        window.scrollTo(scroll.x, scroll.y);
-      },
-      args: [originalScroll]
-    });
+    // Restore original scroll position (only if we scrolled to top earlier)
+    if (!dims.isScrollLocked) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (scroll: { x: number; y: number }) => {
+          window.scrollTo(scroll.x, scroll.y);
+        },
+        args: [originalScroll]
+      });
+    }
 
     // Note: X-ray will be restored by cart.js after successful capture
     // with updated match colors (green/red)
@@ -512,7 +546,40 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       throw new Error(extractionResult.error);
     }
 
-    const segments: Segment[] = extractionResult.textElements || [];
+    let segments: Segment[] = extractionResult.textElements || [];
+
+    // When scroll is locked (modal open), filter to only visible segments in viewport
+    // and adjust coordinates to be viewport-relative
+    if (dims.isScrollLocked) {
+      const scrollX = originalScroll.x;
+      const scrollY = originalScroll.y;
+
+      segments = segments
+        .filter(seg => {
+          // Skip segments marked as invisible (x:0,y:0,width:0,height:0)
+          if (seg.x === 0 && seg.y === 0 && seg.width === 0 && seg.height === 0) {
+            return false;
+          }
+          // Convert to viewport-relative for bounds check
+          const viewportY = seg.y - scrollY;
+          const viewportX = seg.x - scrollX;
+          // Only include segments within viewport bounds
+          const inViewport = viewportY < dims.viewportHeight && (viewportY + seg.height) > 0 &&
+                            viewportX < dims.viewportWidth && (viewportX + seg.width) > 0;
+          return inViewport;
+        })
+        .map(seg => ({
+          ...seg,
+          // Adjust coordinates to be viewport-relative
+          x: seg.x - scrollX,
+          y: seg.y - scrollY
+        }));
+    } else {
+      // For full-page captures, just filter out invisible segments
+      segments = segments.filter(seg =>
+        !(seg.x === 0 && seg.y === 0 && seg.width === 0 && seg.height === 0)
+      );
+    }
 
     // Validate segments were detected
     if (segments.length === 0) {
@@ -586,6 +653,7 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       documentHeight: dims.documentHeight,
       screenshotScale: screenshotScale,
       isMobileEmulation: dims.isMobileEmulation,
+      isScrollLocked: dims.isScrollLocked,
       matchedTUs: Array.from(matchedTUs.values()),
       matchedCount,
       favicon: tab.favIconUrl,
@@ -711,9 +779,10 @@ async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions
     createdAt: new Date().toISOString(),
     pages: capturedPages.map((page, index) => {
       // Normalize coordinates from CSS pixels to (0-1) range
-      // Use viewportWidth for X, documentHeight for Y
+      // Use viewportWidth for X
+      // For Y: use viewportHeight if scroll was locked (modal capture), otherwise documentHeight
       const vw = page.viewportWidth || 1;
-      const dh = page.documentHeight || 1;
+      const dh = page.isScrollLocked ? (page.viewportHeight || 1) : (page.documentHeight || 1);
 
       return {
         pageId: page.pageId,
@@ -730,9 +799,10 @@ async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions
           screenshotScale: page.screenshotScale,
           isMobileEmulation: page.isMobileEmulation,
           hasHorizontalOverflow: (page.documentWidth || 0) > (page.viewportWidth || 0),
+          isScrollLocked: page.isScrollLocked || false,
           // Calculated screenshot dimensions (CSS dims * scale)
           screenshotPixelWidth: Math.round((page.viewportWidth || 0) * (page.screenshotScale || 1)),
-          screenshotPixelHeight: Math.round((page.documentHeight || 0) * (page.screenshotScale || 1)),
+          screenshotPixelHeight: Math.round(dh * (page.screenshotScale || 1)),
         },
         // Segment coordinates normalized to (0-1) - PWA multiplies by display dimensions
         segments: page.segments.map(seg => ({
