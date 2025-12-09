@@ -150,6 +150,8 @@ export interface URLRewriteRule {
  */
 export interface RuntimeMessage {
   action: string;
+  segments?: Segment[];
+  tus?: TranslationUnit[];
   [key: string]: any;
 }
 

@@ -320,8 +320,8 @@ class CartManager {
         await this.render();
         this.showStatus(`Captured: ${response.data.title || 'Page'}`, 'success');
 
-        // Re-enable X-ray with color-coded segments (green/red)
-        await this.showXRayWithSegments(response.data.segments);
+        // Re-enable X-ray with color-coded segments (green/red) and TU data
+        await this.showXRayWithSegments(response.data.segments, response.data.matchedTUs);
 
         // Show warnings modal if warnings exist
         if (response.data.warnings && response.data.warnings.length > 0) {
@@ -425,11 +425,12 @@ class CartManager {
         console.log('[Cart] Retry result:', segments.length, 'segments');
       }
 
-      // If page was previously captured, preserve matched status (green/red colors)
+      // If page was previously captured, preserve matched status (green/red colors) and TU data
+      let tus: any[] | undefined;
       const lastPage = this.capturedPages
         .slice()
         .reverse()
-        .find(p => p.originalUrl === this.currentTab!.url);
+        .find(p => p.originalUrl === this.currentTab!.url) as ExtendedCapturedPage | undefined;
 
       if (lastPage) {
         segments = segments.map(seg => {
@@ -442,6 +443,8 @@ class CartManager {
           }
           return seg;
         });
+        // Also get the TU data from the captured page
+        tus = lastPage.matchedTUs;
       }
 
       // Update segment count
@@ -456,7 +459,8 @@ class CartManager {
       const xrayMessage: RuntimeMessage = {
         action: 'toggle-xray',
         enabled: true,
-        segments
+        segments,
+        tus
       };
       await chrome.tabs.sendMessage(this.currentTab.id!, xrayMessage);
     } catch {
@@ -512,7 +516,7 @@ class CartManager {
     }
   }
 
-  private async showXRayWithSegments(segments: Segment[]): Promise<void> {
+  private async showXRayWithSegments(segments: Segment[], tus?: any[]): Promise<void> {
     try {
       await this.updateCurrentTab();
       if (!this.currentTab) return;
@@ -526,11 +530,12 @@ class CartManager {
         files: ['content/xray-overlay.js']
       });
 
-      // Enable X-ray with provided segments
+      // Enable X-ray with provided segments and TU data
       const message: RuntimeMessage = {
         action: 'toggle-xray',
         enabled: true,
-        segments
+        segments,
+        tus
       };
       await chrome.tabs.sendMessage(this.currentTab.id!, message);
     } catch (error) {

@@ -92,7 +92,7 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
 
 2. **Content Scripts**
    - `src/content/extractor.ts`: Extracts text segments with FE00-encoded metadata
-   - `src/content/xray-overlay.ts`: X-Ray Vision overlay showing detected segments
+   - `src/content/xray-overlay.ts`: X-Ray Vision overlay showing detected segments with click-to-inspect modal
 
 3. **Side Panel** (`src/sidepanel/`)
    - `index.html`: Cart UI
@@ -356,6 +356,30 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
 }
 ```
 
+## X-Ray Vision Overlay
+
+### Segment Interaction
+
+When X-Ray Vision is enabled, segments are highlighted on the page with color-coded borders:
+- **Gray (dashed)**: Segment not yet looked up (before capture)
+- **Green (dashed)**: Segment matched in TM lookup
+- **Red (dashed)**: Segment not matched in TM lookup
+
+**Click on a segment** to open a modal with two sections:
+
+1. **Invisicode Metadata**: Shows decoded FE00 metadata (GUID, SID, etc.)
+2. **TM Lookup**: Shows translation data (source, target, quality, timestamp, provider, notes)
+
+If no TM data is available, a **Lookup** button allows fetching TM data for that specific segment. On successful lookup, the segment turns green.
+
+### Segment Data Flow
+
+1. `extractor.ts` extracts segments with FE00-decoded metadata
+2. Segments are passed to `xray-overlay.ts` for rendering
+3. After capture, `matchedTUs` from TM lookup are also passed
+4. The overlay stores TUs in a `Map<guid, TranslationUnit>` for modal display
+5. Clicking Lookup sends `lookup-single-segment` message to service worker
+
 ## Translation Memory Integration
 
 ### TM Endpoint Configuration
@@ -387,17 +411,59 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
 {
   "results": [
     {
-      "guid": "guid-abc123",
-      "sid": "hello_world",
-      "source": "Hello World",
-      "target": "Hola Mundo",
-      "q": 100,
-      "ts": "2025-01-15T10:00:00Z"
+      "rid": "path/to/resource.json",
+      "sid": "footer.copyright",
+      "guid": "6_Q1fFZPe-wAgsjCy54e47rdFEXdpfaNetaeYkh_Tmw",
+      "nsrc": [
+        "© ",
+        { "t": "x", "v": "{{year}}", "s": "2025" },
+        " ",
+        { "t": "x", "v": "{{companyName}}", "s": "Commerce Portal" },
+        ". All rights reserved."
+      ],
+      "ntgt": [
+        "© ",
+        { "t": "x", "v": "{{year}}", "s": "2025" },
+        " ",
+        { "t": "x", "v": "{{companyName}}", "s": "Commerce Portal" },
+        ". Todos los derechos reservados."
+      ],
+      "translationProvider": "firstParty_gemini",
+      "ts": 1764086761531,
+      "q": 70,
+      "notes": {
+        "ph": {
+          "{{companyName}}": { "sample": "Commerce Portal", "desc": "The name of the company" },
+          "{{year}}": { "sample": "2025", "desc": "The current year" }
+        },
+        "desc": "Copyright text for the footer"
+      }
     }
   ],
   "warnings": [
     "Optional warning messages"
   ]
+}
+```
+
+**Response Fields**:
+- `rid`: Resource ID (file path)
+- `sid`: String ID within the resource
+- `guid`: Unique identifier for the translation unit
+- `nsrc`: Normalized source - array of strings and placeholder objects
+- `ntgt`: Normalized target - array of strings and placeholder objects
+- `translationProvider`: Provider that created the translation
+- `ts`: Timestamp (Unix milliseconds)
+- `q`: Quality score (0-100)
+- `notes`: Object with `ph` (placeholder descriptions) and `desc` (segment description)
+
+**Placeholder Object Format** (in nsrc/ntgt):
+```json
+{
+  "t": "x",           // Type: "x" (standalone), "bx" (begin tag), "ex" (end tag)
+  "v": "{{year}}",    // Placeholder code (always displayed in UI)
+  "s": "2025",        // Sample value
+  "v1": "a_x_year"    // Optional alternate identifier
 }
 ```
 
@@ -407,6 +473,7 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
    - Detects FE00-encoded Unicode markers
    - Decodes metadata (GUID, string ID, etc.)
    - Returns array of segments with coordinates
+   - Note: `matched` field is stripped from decoded metadata to prevent false positives
 
 2. **TM Lookup** (`src/background/service-worker.ts`):
    - Sends POST request with decoded metadata
@@ -418,6 +485,29 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
    - Screenshots saved as PNG files
    - `flow_metadata.json` includes all segments with match status
    - `job.json` includes unique TUs (if any matched)
+
+### Single-Segment Lookup
+
+The X-Ray overlay modal has a "Lookup" button for individual segment TM lookup:
+
+**Message**: `lookup-single-segment`
+```javascript
+// Request (from xray-overlay.ts)
+chrome.runtime.sendMessage({
+  action: 'lookup-single-segment',
+  segment: { g: 'guid-here', sid: 'string-id', ... }
+});
+
+// Response
+{ success: true, tu: { ... TranslationUnit ... } }
+// OR
+{ success: false, error: 'No TM match found' }
+```
+
+**Handler** (`src/background/service-worker.ts`):
+- Reuses `fetchTUsForSegments()` with single-segment array
+- Returns matching TU or error message
+- Requires TM endpoint to be configured in settings
 
 ## Common Issues & Solutions
 

@@ -205,6 +205,8 @@ function extractTextAndMetadata(): ExtractionResult {
             const decodedJsonMetadata = fe00RangeToUtf8Browser(activeSegment.encodedMetadata);
             if (decodedJsonMetadata && decodedJsonMetadata.trim() !== '') {
               parsedMetadata = JSON.parse(decodedJsonMetadata);
+              // Remove 'matched' if present - this field should only be set by TM lookup
+              delete parsedMetadata.matched;
             }
           } catch (e) {
             const error = e as Error;
@@ -264,6 +266,8 @@ function extractTextAndMetadata(): ExtractionResult {
               const decodedJsonMetadata = fe00RangeToUtf8Browser(match[1]);
               if (decodedJsonMetadata && decodedJsonMetadata.trim() !== '') {
                 parsedMetadata = JSON.parse(decodedJsonMetadata);
+                // Remove 'matched' if present - this field should only be set by TM lookup
+                delete parsedMetadata.matched;
               }
             } catch (e) {
               const error = e as Error;
