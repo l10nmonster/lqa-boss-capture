@@ -1,3 +1,22 @@
+# [2.2.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.1.1...v2.2.0) (2025-12-09)
+
+
+### Bug Fixes
+
+* Aspect ratio of preview images in cart is wrong ([2ac9797](https://github.com/l10nmonster/lqa-boss-capture/commit/2ac9797b982a084607850a23d03d85f6be1ae2d7))
+* Improve extraction and log errors ([4a71077](https://github.com/l10nmonster/lqa-boss-capture/commit/4a710774c11389086458328f341112362a591991))
+* Improve X-Ray handling ([5bd0f1e](https://github.com/l10nmonster/lqa-boss-capture/commit/5bd0f1e4d7121219fa9d6941e764d8c2a8769411))
+* Incorrect screenshots for mobile emulation mode with non-scrollable pages ([d46859f](https://github.com/l10nmonster/lqa-boss-capture/commit/d46859f7807ab48ba7637d161230bc2914816a1b))
+* Screenshots of modals include unscrollable content ([a1058d0](https://github.com/l10nmonster/lqa-boss-capture/commit/a1058d0f26310090c9a31904eeda4c7a5eec629e))
+* Unify extraction logic between xray toggle and scroll ([4916ce6](https://github.com/l10nmonster/lqa-boss-capture/commit/4916ce6cc0a2842fe8971df8221b282dffd69a03))
+* Unify x-ray code paths ([07f966e](https://github.com/l10nmonster/lqa-boss-capture/commit/07f966ec96acf7285f9af96a5948585ed86edb91))
+* X-ray enabling unnecessarily ([217f065](https://github.com/l10nmonster/lqa-boss-capture/commit/217f0652a102c18bfe934e7e1ecfa2d58dc22d61))
+
+
+### Features
+
+* Add a preview to the pages in the cart ([7a8e578](https://github.com/l10nmonster/lqa-boss-capture/commit/7a8e57849dbf7681d8f52e0ea78905d0f1ccfccb))
+
 ## [2.1.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.1.0...v2.1.1) (2025-12-07)
 
 
