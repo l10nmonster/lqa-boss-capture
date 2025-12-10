@@ -105,6 +105,9 @@ class CartManager {
         } else {
           await this.disableXRay();
         }
+      } else if (msg.action === 'keyboard-refresh-xray') {
+        // Alt+Z keyboard shortcut - refresh X-ray segments
+        await this.refreshXRay();
       }
     });
 
@@ -229,6 +232,14 @@ class CartManager {
     if (xrayCheckbox) {
       xrayCheckbox.addEventListener('change', async () => {
         await this.setXrayEnabled(xrayCheckbox.checked);
+      });
+    }
+
+    // X-Ray refresh button
+    const xrayRefreshBtn = document.getElementById('xray-refresh-btn');
+    if (xrayRefreshBtn) {
+      xrayRefreshBtn.addEventListener('click', async () => {
+        await this.refreshXRay();
       });
     }
 
@@ -513,6 +524,24 @@ class CartManager {
     const checkbox = document.getElementById('xray-checkbox') as HTMLInputElement;
     if (checkbox) {
       checkbox.checked = enabled;
+    }
+  }
+
+  private async refreshXRay(): Promise<void> {
+    // Only refresh if X-ray is currently enabled
+    if (!this.xrayUserEnabled) return;
+
+    const refreshBtn = document.getElementById('xray-refresh-btn');
+
+    try {
+      // Add spinning animation
+      refreshBtn?.classList.add('spinning');
+
+      // Re-extract and update the overlay without turning it off first
+      await this.enableXRay();
+    } finally {
+      // Remove spinning animation
+      refreshBtn?.classList.remove('spinning');
     }
   }
 

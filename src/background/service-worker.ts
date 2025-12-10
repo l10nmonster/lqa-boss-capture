@@ -1315,6 +1315,15 @@ chrome.commands.onCommand.addListener(async (command) => {
         // Port may be disconnected - ignore
       }
     }
+  } else if (command === 'refresh-xray') {
+    // Only works when side panel is open
+    if (sidePanelPort) {
+      try {
+        sidePanelPort.postMessage({ action: 'keyboard-refresh-xray' });
+      } catch {
+        // Port may be disconnected - ignore
+      }
+    }
   }
 });
 

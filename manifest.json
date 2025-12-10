@@ -61,6 +61,13 @@
         "mac": "Alt+X"
       },
       "description": "Toggle X-Ray"
+    },
+    "refresh-xray": {
+      "suggested_key": {
+        "default": "Alt+Z",
+        "mac": "Alt+Z"
+      },
+      "description": "Refresh X-Ray segments"
     }
   }
 }
