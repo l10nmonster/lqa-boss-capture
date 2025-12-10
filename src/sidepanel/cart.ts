@@ -38,6 +38,26 @@ interface RuntimeResponse extends BaseRuntimeResponse {
 }
 
 /**
+ * List of restricted URL protocols that Chrome extensions cannot access
+ */
+const RESTRICTED_PROTOCOLS = [
+  'chrome:',
+  'chrome-extension:',
+  'view-source:',
+  'devtools:'
+];
+
+/**
+ * Check if a URL is restricted (cannot be accessed by extensions)
+ */
+function isRestrictedUrl(url: string | undefined): boolean {
+  if (!url || url === 'about:blank') return true;
+  if (RESTRICTED_PROTOCOLS.some(protocol => url.startsWith(protocol))) return true;
+  if (url.includes('chrome.google.com/webstore')) return true;
+  return false;
+}
+
+/**
  * Generate a 3-character random suffix for uniqueness
  */
 function generateRandomSuffix(): string {
@@ -361,6 +381,11 @@ class CartManager {
   private async extractSegments(): Promise<Segment[]> {
     if (!this.currentTab?.id) return [];
 
+    // Silently skip restricted URLs (chrome://, edge://, etc.)
+    if (isRestrictedUrl(this.currentTab.url)) {
+      return [];
+    }
+
     try {
       // Hide X-ray overlay before extracting to avoid interference with elementFromPoint
       try {
@@ -396,31 +421,8 @@ class CartManager {
         return;
       }
 
-      // Check if URL is accessible
-      const url = this.currentTab.url || '';
-
-      // Skip restricted URLs or empty URLs
-      if (!url || url === 'about:blank') {
-        this.updateSegmentCount(0);
-        return;
-      }
-
-      const restrictedProtocols = [
-        'chrome:',
-        'edge:',
-        'about:',
-        'chrome-extension:',
-        'data:',
-        'view-source:',
-        'chrome-search:',
-        'devtools:'
-      ];
-
-      // Also block Chrome Web Store
-      const isRestricted = restrictedProtocols.some(protocol => url.startsWith(protocol)) ||
-                          url.includes('chrome.google.com/webstore');
-
-      if (isRestricted) {
+      // Skip restricted URLs (chrome://, edge://, etc.)
+      if (isRestrictedUrl(this.currentTab.url)) {
         this.updateSegmentCount(0);
         return;
       }
