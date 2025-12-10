@@ -1,3 +1,18 @@
+# [2.3.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.2.1...v2.3.0) (2025-12-10)
+
+
+### Bug Fixes
+
+* Add refresh button ([cf76376](https://github.com/l10nmonster/lqa-boss-capture/commit/cf7637608e93a138cdb2c82e2e09ad3790b2a0cc))
+* Don't disable lookup button on failure ([f930d04](https://github.com/l10nmonster/lqa-boss-capture/commit/f930d043728085d9d43445aac34f83e56a1784ac))
+* Improve screenshot dependency of timing ([c340bf5](https://github.com/l10nmonster/lqa-boss-capture/commit/c340bf59b9984f6bacfb8009e45339e6a40ae6f4))
+
+
+### Features
+
+* Add a segment inspection popover with full metadata ([46ceab8](https://github.com/l10nmonster/lqa-boss-capture/commit/46ceab8478f762eb5eee063d81ae3bfc06b31135))
+* Add createdBy property to flow_metadata ([998437b](https://github.com/l10nmonster/lqa-boss-capture/commit/998437b6536baabe6edb11790fd70626e6486b15))
+
 ## [2.2.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.2.0...v2.2.1) (2025-12-09)
 
 
