@@ -478,12 +478,22 @@ function showSegmentModal(seg: Segment): void {
             // Refresh modal to show the TU data
             showSegmentModal(seg);
           } else {
+            // Show error briefly, then reset button for retry
             lookupBtn.textContent = response.error || 'No match found';
-            lookupBtn.disabled = true;
+            lookupBtn.classList.remove('loading');
+            setTimeout(() => {
+              lookupBtn.textContent = 'Lookup';
+              lookupBtn.disabled = false;
+            }, 2000);
           }
         } catch (error) {
+          // Show error briefly, then reset button for retry
           lookupBtn.textContent = 'Lookup failed';
-          lookupBtn.disabled = true;
+          lookupBtn.classList.remove('loading');
+          setTimeout(() => {
+            lookupBtn.textContent = 'Lookup';
+            lookupBtn.disabled = false;
+          }, 2000);
         }
       });
       tmSection.appendChild(lookupBtn);
