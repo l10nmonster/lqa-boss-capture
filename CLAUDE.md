@@ -311,6 +311,7 @@ lqa-flow-YYYY-MM-DDTHH-MM-SS.lqaboss
 
 ```json
 {
+  "createdBy": "string (application name and version, e.g., 'LQA Boss Capture v2.2.1')",
   "createdAt": "ISO8601 timestamp",
   "pages": [
     {

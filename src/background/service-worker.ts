@@ -818,7 +818,9 @@ async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions
   });
 
   // Add flow metadata
+  const manifest = chrome.runtime.getManifest();
   const flowMetadata = {
+    createdBy: `${manifest.name} v${manifest.version}`,
     createdAt: new Date().toISOString(),
     pages: capturedPages.map((page, index) => {
       // Normalize coordinates from CSS pixels to (0-1) range
