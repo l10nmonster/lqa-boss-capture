@@ -15,6 +15,7 @@ const buildConfig = {
     'src/content/extractor.ts',
     'src/sidepanel/settings.ts',
     'src/lib/fe00-decoder.ts',
+    'src/lib/chunking.ts',
   ],
   bundle: true,
   outdir: 'test-dist',

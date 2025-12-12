@@ -155,31 +155,93 @@ This is a Manifest V3 Chrome extension for capturing web pages with screenshots 
 2. `requestFlow`: Request pending flow data
    ```javascript
    Request: { action: 'requestFlow' }
+
+   // Small flow (≤32MB): sent directly
    Response: {
      success: true,
-     data: { zipData: [1,2,3,...], fileName: 'flow.lqaboss' }
+     data: { zipBase64: 'base64...', fileName: 'flow.lqaboss' }
    }
+
+   // Large flow (>32MB): chunked transfer
+   Response: {
+     success: true,
+     data: {
+       flowId: 'temp_123...',
+       fileName: 'flow.lqaboss',
+       totalSize: 71303168,
+       totalChunks: 3,
+       chunked: true
+     }
+   }
+
    // OR
    Response: { success: false, error: 'No flow available' }
+   ```
+
+3. `requestFlowChunk`: Request a specific chunk of a large flow
+   ```javascript
+   Request: { action: 'requestFlowChunk', flowId: 'temp_123...', chunkIndex: 0 }
+   Response: {
+     success: true,
+     data: {
+       chunkIndex: 0,
+       chunkBase64: 'base64...',
+       isLastChunk: false
+     }
+   }
    ```
 
 **Messages TO PWA** (via opening PWA with URL):
 - Extension opens: `https://pwa-url/?plugin=extension`
 - PWA detects parameter and sends `requestFlow` message back
 
+### Chunked Transfer for Large Flows
+
+Chrome extension message passing has a **64MB limit**. Base64 encoding adds ~33% overhead, so we use chunked transfer for flows larger than 32MB.
+
+**Chunking Logic** (`src/lib/chunking.ts`):
+- `MAX_CHUNK_SIZE`: 32MB binary → ~43MB base64 (safely under 64MB limit)
+- `needsChunkedTransfer(totalBytes)`: Returns true if flow > 32MB
+- `calculateChunkCount(totalBytes)`: Number of chunks needed
+- `getChunkRange(chunkIndex, totalBytes)`: Start/end byte offsets
+- `isLastChunk(chunkIndex, totalBytes)`: True for final chunk
+
+**Transfer Flow**:
+1. PWA sends `requestFlow`
+2. If flow ≤ 32MB: Extension responds with full base64 data
+3. If flow > 32MB: Extension responds with metadata (`flowId`, `totalChunks`, `chunked: true`)
+4. PWA iteratively requests each chunk via `requestFlowChunk`
+5. PWA reassembles chunks into full ZIP
+6. Extension cleans up IndexedDB after last chunk
+
+**Example** (67.8MB flow):
+```
+PWA → requestFlow
+Extension ← { chunked: true, totalChunks: 3, flowId: 'temp_123' }
+PWA → requestFlowChunk { chunkIndex: 0 } ← 32MB base64
+PWA → requestFlowChunk { chunkIndex: 1 } ← 32MB base64
+PWA → requestFlowChunk { chunkIndex: 2 } ← 3.8MB base64, isLastChunk: true
+```
+
 ### Flow Storage
 
-**Temporary In-Memory Storage**:
-- Flows stored in `pendingFlow` variable in service worker
-- Automatically expires after 5 minutes
-- Cleared after successful retrieval
-- No persistence to storage APIs
+**IndexedDB Storage** (`lqaboss-capture` database):
+- Large flows stored in `temp-flows` object store during chunked transfer
+- Identified by unique `flowId` (e.g., `temp_1234567890_abc123def`)
+- Automatically deleted after successful retrieval or 5-minute expiration
+- Avoids 64MB message limit by storing data separately from message passing
 
-**Why temporary:**
-- Simple implementation
-- No storage quota concerns
-- Encourages immediate transfer to PWA
-- Security: data not left in storage
+**Pending Flow Reference**:
+- `pendingFlow` variable stores only metadata (flowId, fileName, timestamp)
+- Actual ZIP data lives in IndexedDB
+- Expires after 5 minutes
+- Cleared after successful retrieval
+
+**Why this design:**
+- Avoids Chrome's 64MB message passing limit
+- Supports arbitrarily large flows via chunking
+- IndexedDB has much higher storage limits than message passing
+- Clean separation between metadata (memory) and data (IndexedDB)
 
 ### PWA Launch Behavior
 

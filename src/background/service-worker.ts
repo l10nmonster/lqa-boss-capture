@@ -16,6 +16,14 @@ import type {
   TMServiceResponse
 } from '../types/shared.js';
 
+import {
+  MAX_CHUNK_SIZE,
+  needsChunkedTransfer,
+  calculateChunkCount,
+  getChunkRange,
+  isLastChunk
+} from '../lib/chunking.js';
+
 // Import JSZip type declaration
 declare const JSZip: any;
 
@@ -101,10 +109,6 @@ let urlRewriteRules: URLRewriteRule[] = [];
 
 // Pending flow storage for PWA communication
 let pendingFlow: PendingFlow | null = null;
-
-// Maximum chunk size for message passing
-// Base64 encoding adds ~33% overhead, so 32MB binary → ~43MB base64 (under 64MB limit)
-const MAX_CHUNK_SIZE = 32 * 1024 * 1024;
 
 // Default screenshot settings (can be overridden in user settings)
 const DEFAULT_SCREENSHOT_QUALITY = 80;
@@ -1540,7 +1544,7 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
           const fileName = pendingFlow.fileName;
 
           // If small enough, send directly (existing behavior)
-          if (totalSize <= MAX_CHUNK_SIZE) {
+          if (!needsChunkedTransfer(totalSize)) {
             const zipBase64 = new Uint8Array(zipArrayBuffer).toBase64();
 
             // Clean up IndexedDB and clear pending flow reference
@@ -1564,7 +1568,7 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
           }
 
           // Large flow: send metadata, keep data for chunk requests
-          const totalChunks = Math.ceil(totalSize / MAX_CHUNK_SIZE);
+          const totalChunks = calculateChunkCount(totalSize);
           console.log(`[ServiceWorker] Large flow detected (${(totalSize / 1024 / 1024).toFixed(1)}MB), using chunked transfer (${totalChunks} chunks)`);
 
           sendResponse({
@@ -1595,17 +1599,18 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
             return;
           }
 
-          const start = chunkIndex * MAX_CHUNK_SIZE;
-          const end = Math.min(start + MAX_CHUNK_SIZE, zipArrayBuffer.byteLength);
+          const totalSize = zipArrayBuffer.byteLength;
+          const { start, end } = getChunkRange(chunkIndex, totalSize);
           const chunk = zipArrayBuffer.slice(start, end);
           const chunkBase64 = new Uint8Array(chunk).toBase64();
 
-          const isLastChunk = end >= zipArrayBuffer.byteLength;
+          const lastChunk = isLastChunk(chunkIndex, totalSize);
+          const totalChunks = calculateChunkCount(totalSize);
 
-          console.log(`[ServiceWorker] Sending chunk ${chunkIndex + 1}/${Math.ceil(zipArrayBuffer.byteLength / MAX_CHUNK_SIZE)} (${(chunk.byteLength / 1024 / 1024).toFixed(1)}MB)`);
+          console.log(`[ServiceWorker] Sending chunk ${chunkIndex + 1}/${totalChunks} (${(chunk.byteLength / 1024 / 1024).toFixed(1)}MB)`);
 
           // Clean up after last chunk
-          if (isLastChunk) {
+          if (lastChunk) {
             await deleteFlowFromDB(flowId);
             pendingFlow = null;
             console.log('[ServiceWorker] Chunked transfer complete, cleaned up');
@@ -1625,7 +1630,7 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
             data: {
               chunkIndex,
               chunkBase64,
-              isLastChunk
+              isLastChunk: lastChunk
             }
           });
           break;

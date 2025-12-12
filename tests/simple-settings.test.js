@@ -9,6 +9,8 @@ document.body.innerHTML = `
   <input id="target-lang" value="" />
   <input id="modal-pwa-url" value="" />
   <input id="job-name" value="" />
+  <input id="screenshot-quality" value="" />
+  <input id="screenshot-max-height" value="" />
   <button id="upload-quality-model-btn"></button>
   <input type="file" id="quality-model-upload" />
   <button id="clear-quality-model-btn"></button>
