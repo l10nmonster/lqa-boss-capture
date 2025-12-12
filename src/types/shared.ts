@@ -70,6 +70,7 @@ export interface CapturedPage {
   viewportHeight?: number;   // CSS viewport height
   documentWidth?: number;    // CSS document width (full page)
   documentHeight?: number;   // CSS document height (full page)
+  capturedHeight?: number;   // CSS height actually captured (may be less than documentHeight if truncated)
   screenshotScale?: number;  // Ratio: screenshot pixels / CSS pixels
   isMobileEmulation?: boolean; // Whether captured in mobile emulation mode
   isScrollLocked?: boolean;  // Whether scroll was locked (modal open) during capture
@@ -102,6 +103,8 @@ export interface Settings {
   pwaUrl: string;
   qualityModel: QualityModel | null;
   jobName: string;
+  screenshotQuality: number;  // 1-100, 100 = PNG, otherwise JPEG with this quality
+  screenshotMaxHeight: number;  // Maximum screenshot height in physical pixels
 }
 
 /**
@@ -195,9 +198,10 @@ export interface CaptureState {
 
 /**
  * Extension-specific: Pending flow for PWA transfer
+ * Uses flowId reference to IndexedDB instead of raw zipData to avoid 64MB message limit
  */
 export interface PendingFlow {
-  zipData: number[];
+  flowId: string;
   fileName: string;
-  createdAt: number;
+  timestamp: number;
 }

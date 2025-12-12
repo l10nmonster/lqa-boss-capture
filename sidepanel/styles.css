@@ -204,6 +204,21 @@ body {
   color: var(--gray-700);
 }
 
+.cart-memory {
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-left: auto;
+  margin-right: 12px;
+}
+
+.cart-memory.warning {
+  color: var(--warning);
+}
+
+.cart-memory.danger {
+  color: var(--danger);
+}
+
 .cart-list {
   flex: 1;
   overflow-y: auto;

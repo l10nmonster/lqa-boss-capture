@@ -10,7 +10,7 @@
   <div class="container">
     <!-- Header -->
     <header class="header">
-      <h1>LQA Boss</h1>
+      <h1 id="app-title">LQA Boss</h1>
       <div class="header-actions">
         <button id="url-rewrite-settings-btn" class="icon-btn" title="Settings">
           ⚙️
@@ -90,6 +90,7 @@
       <section class="cart">
         <div class="cart-header">
           <h2>Captured Pages (<span id="page-count">0</span>)</h2>
+          <span id="cart-memory" class="cart-memory" title="Estimated memory usage"></span>
           <button id="clear-cart-btn" class="btn-text" disabled>Clear All</button>
         </div>
         <div id="cart-list" class="cart-list">
@@ -141,6 +142,29 @@
         <button id="close-rewrite-modal-btn" class="modal-close">&times;</button>
       </div>
       <div class="modal-body">
+        <!-- Screenshot Settings Section -->
+        <div class="settings-section" style="margin-bottom: 24px;">
+          <h4 style="margin-bottom: 12px; font-size: 14px; font-weight: 600; color: var(--gray-900);">Screenshot Images</h4>
+          <div class="form-row" style="display: flex; gap: 12px;">
+            <div class="form-group" style="flex: 1;">
+              <input
+                type="text"
+                id="screenshot-quality"
+                placeholder="Quality (1-100)"
+                style="width: 100%;"
+              >
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <input
+                type="text"
+                id="screenshot-max-height"
+                placeholder="Max Height (px)"
+                style="width: 100%;"
+              >
+            </div>
+          </div>
+        </div>
+
         <!-- TM Settings Section -->
         <div class="settings-section" style="margin-bottom: 24px;">
           <div class="form-group" style="margin-bottom: 12px;">

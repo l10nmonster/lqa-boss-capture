@@ -31,6 +31,7 @@ interface RuntimeMessage extends BaseRuntimeMessage {
   settings?: Settings;
   rules?: URLRewriteRule[];
   zipData?: number[];
+  flowId?: string;
   fileName?: string;
   metadata?: any;
 }
@@ -101,8 +102,13 @@ let urlRewriteRules: URLRewriteRule[] = [];
 // Pending flow storage for PWA communication
 let pendingFlow: PendingFlow | null = null;
 
-// Maximum screenshot height in CSS pixels (prevents excessive memory usage on infinite scroll pages)
-const MAX_CAPTURE_HEIGHT = 16000;
+// Maximum chunk size for message passing
+// Base64 encoding adds ~33% overhead, so 32MB binary → ~43MB base64 (under 64MB limit)
+const MAX_CHUNK_SIZE = 32 * 1024 * 1024;
+
+// Default screenshot settings (can be overridden in user settings)
+const DEFAULT_SCREENSHOT_QUALITY = 80;
+const DEFAULT_SCREENSHOT_MAX_HEIGHT = 16000;
 
 // Load URL rewrite rules on startup
 chrome.runtime.onStartup.addListener(async () => {
@@ -183,6 +189,7 @@ interface PageDimensions {
   documentWidth: number;   // Full scrollable width
   documentHeight: number;  // Full scrollable height
   contentHeight: number;
+  devicePixelRatio: number;  // For calculating physical pixel limits
 }
 
 /**
@@ -256,7 +263,8 @@ async function getPageDimensions(tabId: number): Promise<PageDimensions> {
     isPageScrollable,
     isMobileEmulation,
     contentHeight,
-    isScrollLocked: pageData.isScrollLocked
+    isScrollLocked: pageData.isScrollLocked,
+    devicePixelRatio: pageData.devicePixelRatio
   };
 }
 
@@ -268,6 +276,12 @@ interface CapturedChunk {
 interface ScreenshotResult {
   data: string;
   scale: number;  // Actual scale factor (bitmap pixels / CSS pixels)
+  capturedHeight: number;  // Actual CSS height captured (may be less than documentHeight if truncated)
+}
+
+interface ScreenshotOptions {
+  quality: number;  // 1-100, 100 = PNG
+  maxHeightPixels: number;  // Maximum height in physical pixels
 }
 
 /**
@@ -292,37 +306,50 @@ async function waitForScrollRender(tabId: number): Promise<void> {
  */
 async function captureFullPageWithStitch(
   tabId: number,
-  dims: PageDimensions
+  dims: PageDimensions,
+  options: ScreenshotOptions
 ): Promise<ScreenshotResult> {
   const { viewportWidth, documentWidth, documentHeight } = dims;
-  // Cap document height to prevent excessive memory usage on infinite scroll pages
-  const cappedHeight = Math.min(documentHeight, MAX_CAPTURE_HEIGHT);
   const chunks: CapturedChunk[] = [];
 
-  // First capture to determine actual bitmap dimensions
+  // Determine format and quality based on settings
+  const usePng = options.quality >= 100;
+  const format = usePng ? 'png' : 'jpeg';
+  const mimeType = usePng ? 'image/png' : 'image/jpeg';
+
+  // First capture to determine actual bitmap dimensions and scale
   await chrome.scripting.executeScript({
     target: { tabId },
     func: () => window.scrollTo(0, 0)
   });
   await waitForScrollRender(tabId);
 
+  const screenshotParams: any = { format, captureBeyondViewport: false };
+  if (!usePng) {
+    screenshotParams.quality = options.quality;
+  }
+
   const firstResult = await chrome.debugger.sendCommand(
     { tabId },
     'Page.captureScreenshot',
-    { format: 'png', captureBeyondViewport: false }
+    screenshotParams
   ) as { data: string };
 
-  const firstBlob = await fetch(`data:image/png;base64,${firstResult.data}`).then(r => r.blob());
+  const firstBlob = await fetch(`data:${mimeType};base64,${firstResult.data}`).then(r => r.blob());
   const firstBitmap = await createImageBitmap(firstBlob);
   const bitmapWidth = firstBitmap.width;
   const bitmapHeight = firstBitmap.height;
   const scale = bitmapWidth / viewportWidth;
   const capturedCSSHeight = bitmapHeight / scale; // Actual CSS pixels captured per screenshot
 
+  // Cap document height based on physical pixel limit (accounts for retina displays)
+  const maxCSSHeight = options.maxHeightPixels / scale;
+  const cappedHeight = Math.min(documentHeight, maxCSSHeight);
+
   chunks.push({ data: firstResult.data, scrollY: 0 });
   firstBitmap.close();
 
-  // Keep capturing until we've covered the entire document
+  // Keep capturing until we've covered the target range
   let lastCapturedBottom = capturedCSSHeight; // First chunk covers 0 to capturedCSSHeight
   let prevScrollY = -1; // Track previous scroll to detect when we can't scroll further
 
@@ -360,7 +387,7 @@ async function captureFullPageWithStitch(
       result = await chrome.debugger.sendCommand(
         { tabId },
         'Page.captureScreenshot',
-        { format: 'png', captureBeyondViewport: false }
+        screenshotParams
       ) as { data: string };
 
       // If this chunk is identical to the previous one, wait and retry
@@ -386,7 +413,7 @@ async function captureFullPageWithStitch(
 
   // If only one chunk, return it directly
   if (chunks.length === 1) {
-    return { data: chunks[0].data, scale };
+    return { data: chunks[0].data, scale, capturedHeight: cappedHeight };
   }
 
   // Create canvas at full resolution (using capped height)
@@ -397,7 +424,7 @@ async function captureFullPageWithStitch(
   // Draw all chunks at their scroll positions
   // Canvas clips anything beyond bounds automatically
   for (let i = 0; i < chunks.length; i++) {
-    const blob = await fetch(`data:image/png;base64,${chunks[i].data}`).then(r => r.blob());
+    const blob = await fetch(`data:${mimeType};base64,${chunks[i].data}`).then(r => r.blob());
     const bitmap = await createImageBitmap(blob);
 
     // Draw at actual scroll position - don't special-case last chunk
@@ -409,14 +436,16 @@ async function captureFullPageWithStitch(
   }
 
   // Convert to base64
-  const stitchedBlob = await canvas.convertToBlob({ type: 'image/png' });
+  const stitchedBlob = usePng
+    ? await canvas.convertToBlob({ type: 'image/png' })
+    : await canvas.convertToBlob({ type: 'image/jpeg', quality: options.quality / 100 });
   const arrayBuffer = await stitchedBlob.arrayBuffer();
   const uint8Array = new Uint8Array(arrayBuffer);
   let binary = '';
   for (let i = 0; i < uint8Array.length; i++) {
     binary += String.fromCharCode(uint8Array[i]);
   }
-  return { data: btoa(binary), scale };
+  return { data: btoa(binary), scale, capturedHeight: cappedHeight };
 }
 
 /**
@@ -424,62 +453,80 @@ async function captureFullPageWithStitch(
  */
 async function captureScreenshot(
   tabId: number,
-  dims: PageDimensions
+  dims: PageDimensions,
+  options: ScreenshotOptions
 ): Promise<ScreenshotResult> {
+  // Determine format and quality based on settings
+  const usePng = options.quality >= 100;
+  const format = usePng ? 'png' : 'jpeg';
+  const mimeType = usePng ? 'image/png' : 'image/jpeg';
+
   // If scroll is locked (modal open), just capture current viewport
   if (dims.isScrollLocked) {
+    const screenshotParams: any = { format, captureBeyondViewport: false };
+    if (!usePng) {
+      screenshotParams.quality = options.quality;
+    }
+
     const result = await chrome.debugger.sendCommand(
       { tabId },
       'Page.captureScreenshot',
-      { format: 'png', captureBeyondViewport: false }
+      screenshotParams
     ) as { data: string };
 
-    const blob = await fetch(`data:image/png;base64,${result.data}`).then(r => r.blob());
+    const blob = await fetch(`data:${mimeType};base64,${result.data}`).then(r => r.blob());
     const bitmap = await createImageBitmap(blob);
     const actualScale = bitmap.width / dims.viewportWidth;
     bitmap.close();
 
-    return { data: result.data, scale: actualScale };
+    return { data: result.data, scale: actualScale, capturedHeight: dims.viewportHeight };
   }
 
   if (dims.isMobileEmulation) {
     // Mobile emulation - always use simple viewport capture
     // captureBeyondViewport with clip doesn't work correctly in mobile emulation
     // (coordinates get confused with device pixel ratio)
-    return captureFullPageWithStitch(tabId, dims);
+    return captureFullPageWithStitch(tabId, dims, options);
   }
 
   // Regular capture with captureBeyondViewport (cap height to prevent excessive memory usage)
+  // Calculate max CSS height based on physical pixel limit
+  const maxCSSHeight = options.maxHeightPixels / dims.devicePixelRatio;
   const captureHeight = Math.min(
     dims.isPageScrollable
       ? Math.min(dims.contentHeight, dims.viewportHeight * 5)
       : dims.documentHeight,
-    MAX_CAPTURE_HEIGHT
+    maxCSSHeight
   );
+
+  const screenshotParams: any = {
+    format,
+    captureBeyondViewport: true,
+    clip: {
+      x: 0,
+      y: 0,
+      width: dims.viewportWidth,
+      height: captureHeight,
+      scale: 1
+    }
+  };
+  if (!usePng) {
+    screenshotParams.quality = options.quality;
+  }
 
   const result = await chrome.debugger.sendCommand(
     { tabId },
     'Page.captureScreenshot',
-    {
-      format: 'png',
-      captureBeyondViewport: true,
-      clip: {
-        x: 0,
-        y: 0,
-        width: dims.viewportWidth,
-        height: captureHeight,
-        scale: 1
-      }
-    }
+    screenshotParams
   ) as { data: string };
 
   // Decode to get actual image dimensions for scale calculation
-  const blob = await fetch(`data:image/png;base64,${result.data}`).then(r => r.blob());
+  const blob = await fetch(`data:${mimeType};base64,${result.data}`).then(r => r.blob());
   const bitmap = await createImageBitmap(blob);
   const actualScale = bitmap.width / dims.viewportWidth;
   bitmap.close();
 
-  return { data: result.data, scale: actualScale };
+  return { data: result.data, scale: actualScale, capturedHeight: captureHeight };
 }
 
 /**
@@ -549,47 +596,81 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
     await chrome.debugger.attach({ tabId }, '1.3');
     const dims = await getPageDimensions(tabId);
 
-    // Only scroll to top if scroll is NOT locked (no modal)
-    // When scroll is locked, we capture the current viewport as-is
-    if (!dims.isScrollLocked) {
+    // Get settings from storage early (needed for screenshot options)
+    const settingsResult = await chrome.storage.sync.get('lqaboss_settings');
+    const settings: Settings = settingsResult.lqaboss_settings || {};
+
+    // Screenshot options from settings (with defaults)
+    const screenshotOptions: ScreenshotOptions = {
+      quality: settings.screenshotQuality || DEFAULT_SCREENSHOT_QUALITY,
+      maxHeightPixels: settings.screenshotMaxHeight || DEFAULT_SCREENSHOT_MAX_HEIGHT
+    };
+
+    // Calculate capture range
+    const maxCaptureHeight = screenshotOptions.maxHeightPixels / dims.devicePixelRatio;
+    const captureEndY = Math.min(maxCaptureHeight, dims.documentHeight);
+
+    // Extract segments - method depends on scroll lock state
+    let segments: Segment[] = [];
+
+    if (dims.isScrollLocked) {
+      // When scroll is locked, just extract at current position
+      const extractionResult = await extractPageMetadata(tabId);
+      if (extractionResult.error) {
+        throw new Error(extractionResult.error);
+      }
+      segments = extractionResult.textElements || [];
+    } else {
+      // For full-page capture: extract at each scroll position to handle lazy-loaded content
+      const scrollStep = dims.viewportHeight;
+      const allSegments: Segment[] = [];
+
+      for (let scrollY = 0; scrollY <= captureEndY; scrollY += scrollStep) {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: (y: number) => window.scrollTo(0, y),
+          args: [scrollY]
+        });
+        // Wait for lazy content to load and render
+        await new Promise(resolve => setTimeout(resolve, 150));
+
+        // Extract at this scroll position
+        const extractionResult = await extractPageMetadata(tabId);
+        if (extractionResult.error) {
+          throw new Error(extractionResult.error);
+        }
+
+        const pageSegments: Segment[] = extractionResult.textElements || [];
+
+        // Add segments with valid coordinates that are within the capture range
+        for (const seg of pageSegments) {
+          const hasValidCoords = seg.x !== 0 || seg.y !== 0 || seg.width !== 0 || seg.height !== 0;
+          const inCaptureRange = seg.y < captureEndY;
+          if (hasValidCoords && inCaptureRange) {
+            allSegments.push(seg);
+          }
+        }
+      }
+
+      // Scroll back to top for screenshot
       await chrome.scripting.executeScript({
         target: { tabId },
         func: () => window.scrollTo(0, 0)
       });
-      // Wait for scroll to settle
       await new Promise(resolve => setTimeout(resolve, 50));
-    }
 
-    // Extract metadata (extractor now handles elements below viewport)
-    const extractionResult = await extractPageMetadata(tabId);
-
-    // Capture screenshot (uses scroll-and-stitch for mobile emulation)
-    const screenshotResult = await captureScreenshot(tabId, dims);
-    const screenshotBase64 = screenshotResult.data;
-    const screenshotScale = screenshotResult.scale;
-
-    // Clean up debugger
-    await finishFullPageCapture(tabId);
-
-    // Restore original scroll position (only if we scrolled to top earlier)
-    if (!dims.isScrollLocked) {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (scroll: { x: number; y: number }) => {
-          window.scrollTo(scroll.x, scroll.y);
-        },
-        args: [originalScroll]
+      // Deduplicate by position (same GUID can appear multiple times, but not at same position)
+      // Use a key of "guid:x:y" rounded to nearest 10px to handle minor variations
+      const seen = new Set<string>();
+      segments = allSegments.filter(seg => {
+        const key = `${seg.g}:${Math.round(seg.x / 10) * 10}:${Math.round(seg.y / 10) * 10}`;
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
       });
     }
-
-    // Note: X-ray will be restored by cart.js after successful capture
-    // with updated match colors (green/red)
-
-    if (extractionResult.error) {
-      throw new Error(extractionResult.error);
-    }
-
-    let segments: Segment[] = extractionResult.textElements || [];
 
     // When scroll is locked (modal open), filter to only visible segments in viewport
     // and adjust coordinates to be viewport-relative
@@ -629,17 +710,18 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       throw new Error('No segments detected on this page');
     }
 
-    // Fetch TUs for each segment if TM endpoint is configured
+    // Fetch TUs BEFORE capturing screenshot (to verify TM matches exist)
     let segmentsWithMatches = segments;
     const matchedTUs = new Map<string, TranslationUnit>(); // guid -> TU object
     let matchedCount = 0;
     let warnings: string[] = [];
 
-    // Get settings from storage
-    const result = await chrome.storage.sync.get('lqaboss_settings');
-    const settings: Settings = result.lqaboss_settings || {};
+    // TM endpoint is required for capture
+    if (!settings.tmEndpointUrl) {
+      throw new Error('TM Lookup URL not configured. Please set it in Settings.');
+    }
 
-    if (settings.tmEndpointUrl && segments.length > 0) {
+    if (segments.length > 0) {
       // Fetch TUs for all segments in one batch request
       const tmResult = await fetchTUsForSegments(segments, settings);
 
@@ -676,11 +758,34 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
         }
       });
 
-      // Validate at least one TU was matched
+      // Validate at least one TU was matched BEFORE taking screenshot
       if (matchedCount === 0) {
         throw new Error(`No TUs matched for ${segments.length} segment${segments.length !== 1 ? 's' : ''}`);
       }
     }
+
+    // Now capture screenshot (only after TM lookup succeeds)
+    const screenshotResult = await captureScreenshot(tabId, dims, screenshotOptions);
+    const screenshotBase64 = screenshotResult.data;
+    const screenshotScale = screenshotResult.scale;
+    const capturedHeight = screenshotResult.capturedHeight;
+
+    // Clean up debugger
+    await finishFullPageCapture(tabId);
+
+    // Restore original scroll position (only if we scrolled to top earlier)
+    if (!dims.isScrollLocked) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (scroll: { x: number; y: number }) => {
+          window.scrollTo(scroll.x, scroll.y);
+        },
+        args: [originalScroll]
+      });
+    }
+
+    // Note: X-ray will be restored by cart.js after successful capture
+    // with updated match colors (green/red)
 
     const pageData: ExtendedCapturedPage = {
       pageId: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -694,6 +799,7 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
       viewportHeight: dims.viewportHeight,
       documentWidth: dims.documentWidth,
       documentHeight: dims.documentHeight,
+      capturedHeight,  // Actual height captured (may be less than documentHeight if truncated)
       screenshotScale: screenshotScale,
       isMobileEmulation: dims.isMobileEmulation,
       isScrollLocked: dims.isScrollLocked,
@@ -799,12 +905,16 @@ async function fetchTUsForSegments(segments: Segment[], settings: Settings): Pro
 async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions: string, settings: Settings): Promise<ArrayBuffer> {
   const zip = new JSZip();
 
+  // Determine file extension based on quality setting
+  const usePng = (settings.screenshotQuality || DEFAULT_SCREENSHOT_QUALITY) >= 100;
+  const imageExt = usePng ? 'png' : 'jpg';
+
   // Collect unique TUs from all captured pages
   const allTUs = new Map<string, TranslationUnit>(); // guid -> TU object
 
   // Add screenshots
   capturedPages.forEach((page, index) => {
-    const imageName = `page_${index + 1}_${page.pageId}.png`;
+    const imageName = `page_${index + 1}_${page.pageId}.${imageExt}`;
     zip.file(imageName, page.screenshotBase64, { base64: true });
 
     // Collect TUs from this page
@@ -825,22 +935,28 @@ async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions
     pages: capturedPages.map((page, index) => {
       // Normalize coordinates from CSS pixels to (0-1) range
       // Use viewportWidth for X
-      // For Y: use viewportHeight if scroll was locked (modal capture), otherwise documentHeight
+      // For Y: use viewportHeight if scroll was locked (modal capture), otherwise capturedHeight
+      // capturedHeight accounts for truncation when page exceeds MAX_CAPTURE_HEIGHT_PIXELS
       const vw = page.viewportWidth || 1;
-      const dh = page.isScrollLocked ? (page.viewportHeight || 1) : (page.documentHeight || 1);
+      const capturedH = page.capturedHeight || page.documentHeight || 1;
+      const dh = page.isScrollLocked ? (page.viewportHeight || 1) : capturedH;
+
+      // Filter out segments that are below the captured area (not visible in screenshot)
+      const visibleSegments = page.segments.filter(seg => seg.y < capturedH);
 
       return {
         pageId: page.pageId,
         originalUrl: page.originalUrl,
         title: page.title,
         timestamp: page.timestamp,
-        imageFile: `page_${index + 1}_${page.pageId}.png`,
+        imageFile: `page_${index + 1}_${page.pageId}.${imageExt}`,
         // Debug info for diagnosing coordinate issues
         captureInfo: {
           viewportWidth: page.viewportWidth,
           viewportHeight: page.viewportHeight,
           documentWidth: page.documentWidth,
           documentHeight: page.documentHeight,
+          capturedHeight: page.capturedHeight,
           screenshotScale: page.screenshotScale,
           isMobileEmulation: page.isMobileEmulation,
           hasHorizontalOverflow: (page.documentWidth || 0) > (page.viewportWidth || 0),
@@ -850,7 +966,7 @@ async function createFlowZIP(capturedPages: ExtendedCapturedPage[], instructions
           screenshotPixelHeight: Math.round(dh * (page.screenshotScale || 1)),
         },
         // Segment coordinates normalized to (0-1) - PWA multiplies by display dimensions
-        segments: page.segments.map(seg => ({
+        segments: visibleSegments.map(seg => ({
           g: seg.g,
           text: seg.text,
           x: seg.x / vw,
@@ -950,6 +1066,89 @@ async function saveFlowToSharedDB(flowArrayBuffer: ArrayBuffer, flowMetadata: an
 }
 
 /**
+ * Store flow ZIP temporarily in IndexedDB (for internal extension use)
+ * This avoids Chrome's 64MB message passing limit
+ */
+async function storeFlowZipInDB(zipArrayBuffer: ArrayBuffer): Promise<string> {
+  const flowId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const flowBlob = new Blob([zipArrayBuffer], { type: 'application/zip' });
+
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('lqaboss-capture', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains('temp-flows')) {
+        db.createObjectStore('temp-flows', { keyPath: 'id' });
+      }
+    };
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(['temp-flows'], 'readwrite');
+    const store = transaction.objectStore('temp-flows');
+    const request = store.put({ id: flowId, zipBlob: flowBlob, timestamp: Date.now() });
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve();
+  });
+
+  db.close();
+  return flowId;
+}
+
+/**
+ * Retrieve flow ZIP from IndexedDB
+ */
+async function getFlowZipFromDB(flowId: string): Promise<ArrayBuffer | null> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('lqaboss-capture', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains('temp-flows')) {
+        db.createObjectStore('temp-flows', { keyPath: 'id' });
+      }
+    };
+  });
+
+  const result = await new Promise<{ id: string; zipBlob: Blob; timestamp: number } | undefined>((resolve, reject) => {
+    const transaction = db.transaction(['temp-flows'], 'readonly');
+    const store = transaction.objectStore('temp-flows');
+    const request = store.get(flowId);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+
+  db.close();
+
+  if (!result) return null;
+  return await result.zipBlob.arrayBuffer();
+}
+
+/**
+ * Delete flow from IndexedDB after use
+ */
+async function deleteFlowFromDB(flowId: string): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('lqaboss-capture', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(['temp-flows'], 'readwrite');
+    const store = transaction.objectStore('temp-flows');
+    const request = store.delete(flowId);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve();
+  });
+
+  db.close();
+}
+
+/**
  * Message handler for side panel communication
  */
 chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendResponse) => {
@@ -964,14 +1163,23 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
         }
 
         case 'create-flow': {
+          // Read pages from storage (avoids 64MB message limit)
+          const storageResult = await chrome.storage.local.get('capturedPages');
+          const pages = storageResult.capturedPages as ExtendedCapturedPage[];
+
+          if (!pages || pages.length === 0) {
+            sendResponse({ success: false, error: 'No captured pages found' });
+            break;
+          }
+
           const zipArrayBuffer = await createFlowZIP(
-            request.pages!,
+            pages,
             request.instructions!,
             request.settings!
           );
-          // Convert ArrayBuffer to Array for message passing
-          const zipData = Array.from(new Uint8Array(zipArrayBuffer));
-          sendResponse({ success: true, zipData });
+          // Store in IndexedDB and return flowId (avoids 64MB message limit)
+          const flowId = await storeFlowZipInDB(zipArrayBuffer);
+          sendResponse({ success: true, flowId });
           break;
         }
 
@@ -1003,12 +1211,47 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
         }
 
         case 'store-pending-flow': {
-          // Store flow data temporarily for PWA to retrieve
+          // Store flowId reference for PWA to retrieve (actual data is in IndexedDB)
           pendingFlow = {
-            zipData: request.zipData!,
+            flowId: request.flowId!,
             fileName: request.fileName!,
             timestamp: Date.now()
           };
+          sendResponse({ success: true });
+          break;
+        }
+
+        case 'download-flow': {
+          // Download flow directly from service worker (avoids 64MB message limit)
+          const zipArrayBuffer = await getFlowZipFromDB(request.flowId!);
+          if (!zipArrayBuffer) {
+            sendResponse({ success: false, error: 'Flow not found' });
+            break;
+          }
+
+          // Convert ArrayBuffer to base64 data URL
+          // Service workers don't have URL.createObjectURL, so use data URL
+          const uint8Array = new Uint8Array(zipArrayBuffer);
+          let binaryString = '';
+          // Process in chunks to avoid call stack size issues with large files
+          const chunkSize = 65536;
+          for (let i = 0; i < uint8Array.length; i += chunkSize) {
+            const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
+            binaryString += String.fromCharCode.apply(null, Array.from(chunk));
+          }
+          const base64Data = btoa(binaryString);
+          const dataUrl = `data:application/octet-stream;base64,${base64Data}`;
+
+          await chrome.downloads.download({
+            url: dataUrl,
+            filename: request.fileName!,
+            saveAs: true,
+            conflictAction: 'uniquify'
+          });
+
+          // Clean up IndexedDB
+          await deleteFlowFromDB(request.flowId!);
+
           sendResponse({ success: true });
           break;
         }
@@ -1223,9 +1466,9 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
           // If no pendingFlow, check if we have captured pages in cart
           if (!pendingFlow) {
             // Load captured pages and instructions from storage
-            const result = await chrome.storage.local.get(['capturedPages', 'instructions']);
-            const capturedPages: ExtendedCapturedPage[] = result.capturedPages || [];
-            const instructions: string = result.instructions || '';
+            const storageData = await chrome.storage.local.get(['capturedPages', 'instructions']);
+            const capturedPages: ExtendedCapturedPage[] = storageData.capturedPages || [];
+            const instructions: string = storageData.instructions || '';
 
             if (capturedPages.length === 0) {
               sendResponse({
@@ -1235,7 +1478,7 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
               return;
             }
 
-            // Create flow from captured pages
+            // Create flow from captured pages and store in IndexedDB
             try {
               const settings = await chrome.storage.sync.get('lqaboss_settings');
               const userSettings: Settings = settings.lqaboss_settings || {};
@@ -1246,14 +1489,17 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
                 userSettings
               );
 
-              const zipData = Array.from(new Uint8Array(zipArrayBuffer));
               const fileName = generateFileName(userSettings.jobName);
 
-              sendResponse({
-                success: true,
-                data: { zipData, fileName }
-              });
-              return;
+              // Store in IndexedDB and create pendingFlow for chunked transfer
+              const flowId = await storeFlowZipInDB(zipArrayBuffer);
+              pendingFlow = {
+                flowId,
+                fileName,
+                timestamp: Date.now()
+              };
+
+              // Fall through to the normal pendingFlow handling below
             } catch (error) {
               const err = error as Error;
               console.error('[ServiceWorker] Failed to create flow:', error);
@@ -1269,6 +1515,8 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
           const flowAge = Date.now() - pendingFlow.timestamp;
 
           if (flowAge > 5 * 60 * 1000) {
+            // Clean up expired flow from IndexedDB
+            await deleteFlowFromDB(pendingFlow.flowId);
             pendingFlow = null;
             sendResponse({
               success: false,
@@ -1277,18 +1525,108 @@ chrome.runtime.onMessageExternal.addListener((request: RuntimeMessage, sender, s
             return;
           }
 
-          // Send the flow data
-          const flowData = {
-            zipData: pendingFlow.zipData,
-            fileName: pendingFlow.fileName
-          };
+          // Read ZIP from IndexedDB
+          const zipArrayBuffer = await getFlowZipFromDB(pendingFlow.flowId);
+          if (!zipArrayBuffer) {
+            pendingFlow = null;
+            sendResponse({
+              success: false,
+              error: 'Flow data not found'
+            });
+            return;
+          }
 
-          // Clear pending flow after sending
-          pendingFlow = null;
+          const totalSize = zipArrayBuffer.byteLength;
+          const fileName = pendingFlow.fileName;
+
+          // If small enough, send directly (existing behavior)
+          if (totalSize <= MAX_CHUNK_SIZE) {
+            const zipBase64 = new Uint8Array(zipArrayBuffer).toBase64();
+
+            // Clean up IndexedDB and clear pending flow reference
+            await deleteFlowFromDB(pendingFlow.flowId);
+            pendingFlow = null;
+
+            // Notify side panel that flow was successfully retrieved
+            if (sidePanelPort) {
+              try {
+                sidePanelPort.postMessage({ action: 'flow-retrieved-by-pwa' });
+              } catch {
+                // Port may be disconnected
+              }
+            }
+
+            sendResponse({
+              success: true,
+              data: { zipBase64, fileName }
+            });
+            return;
+          }
+
+          // Large flow: send metadata, keep data for chunk requests
+          const totalChunks = Math.ceil(totalSize / MAX_CHUNK_SIZE);
+          console.log(`[ServiceWorker] Large flow detected (${(totalSize / 1024 / 1024).toFixed(1)}MB), using chunked transfer (${totalChunks} chunks)`);
 
           sendResponse({
             success: true,
-            data: flowData
+            data: {
+              flowId: pendingFlow.flowId,
+              fileName,
+              totalSize,
+              totalChunks,
+              chunked: true
+            }
+          });
+          // Don't delete flow yet - will be deleted after all chunks retrieved
+          break;
+        }
+
+        case 'requestFlowChunk': {
+          const { flowId, chunkIndex } = request;
+
+          if (!flowId || chunkIndex === undefined) {
+            sendResponse({ success: false, error: 'Missing flowId or chunkIndex' });
+            return;
+          }
+
+          const zipArrayBuffer = await getFlowZipFromDB(flowId);
+          if (!zipArrayBuffer) {
+            sendResponse({ success: false, error: 'Flow not found' });
+            return;
+          }
+
+          const start = chunkIndex * MAX_CHUNK_SIZE;
+          const end = Math.min(start + MAX_CHUNK_SIZE, zipArrayBuffer.byteLength);
+          const chunk = zipArrayBuffer.slice(start, end);
+          const chunkBase64 = new Uint8Array(chunk).toBase64();
+
+          const isLastChunk = end >= zipArrayBuffer.byteLength;
+
+          console.log(`[ServiceWorker] Sending chunk ${chunkIndex + 1}/${Math.ceil(zipArrayBuffer.byteLength / MAX_CHUNK_SIZE)} (${(chunk.byteLength / 1024 / 1024).toFixed(1)}MB)`);
+
+          // Clean up after last chunk
+          if (isLastChunk) {
+            await deleteFlowFromDB(flowId);
+            pendingFlow = null;
+            console.log('[ServiceWorker] Chunked transfer complete, cleaned up');
+
+            // Notify side panel that flow was successfully retrieved
+            if (sidePanelPort) {
+              try {
+                sidePanelPort.postMessage({ action: 'flow-retrieved-by-pwa' });
+              } catch {
+                // Port may be disconnected
+              }
+            }
+          }
+
+          sendResponse({
+            success: true,
+            data: {
+              chunkIndex,
+              chunkBase64,
+              isLastChunk
+            }
           });
           break;
         }

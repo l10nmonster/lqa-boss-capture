@@ -24,6 +24,7 @@ interface RuntimeMessage extends BaseRuntimeMessage {
   instructions?: string;
   settings?: any;
   zipData?: number[];
+  flowId?: string;
   fileName?: string;
   enabled?: boolean;
   segments?: Segment[];
@@ -33,6 +34,7 @@ interface RuntimeResponse extends BaseRuntimeResponse {
   data?: any;
   error?: string;
   zipData?: number[];
+  flowId?: string;
   textElements?: Segment[];
   wasVisible?: boolean;
 }
@@ -99,6 +101,13 @@ class CartManager {
   }
 
   private async init(): Promise<void> {
+    // Set app title from manifest
+    const manifest = chrome.runtime.getManifest();
+    const appTitle = document.getElementById('app-title');
+    if (appTitle) {
+      appTitle.textContent = `${manifest.name} v${manifest.version}`;
+    }
+
     // Create persistent port connection to background script
     // When panel closes, this port will disconnect
     this.port = chrome.runtime.connect({ name: 'sidepanel' });
@@ -128,6 +137,10 @@ class CartManager {
       } else if (msg.action === 'keyboard-refresh-xray') {
         // Alt+Z keyboard shortcut - refresh X-ray segments
         await this.refreshXRay();
+      } else if (msg.action === 'flow-retrieved-by-pwa') {
+        // PWA successfully retrieved the flow - show confirmation and clear cart
+        this.showStatus('LQA Boss received the flow successfully!', 'success');
+        await this.clearCartSilent();
       }
     });
 
@@ -618,17 +631,16 @@ class CartManager {
       const instructions = (document.getElementById('instructions') as HTMLTextAreaElement).value.trim();
       const settings = (window as any).settingsManager.getSettings();
 
-      // Create ZIP
+      // Create ZIP (service worker reads pages from storage, avoids 64MB message limit)
       const message: RuntimeMessage = {
         action: 'create-flow',
-        pages: this.capturedPages,
         instructions,
         settings
       };
-      const zipResponse = await chrome.runtime.sendMessage(message) as RuntimeResponse;
+      const createResponse = await chrome.runtime.sendMessage(message) as RuntimeResponse;
 
-      if (!zipResponse.success) {
-        throw new Error(zipResponse.error);
+      if (!createResponse.success || !createResponse.flowId) {
+        throw new Error(createResponse.error || 'Failed to create flow');
       }
 
       sendBtn.innerHTML = '<span class="spinner"></span> Opening LQA Boss...';
@@ -636,10 +648,10 @@ class CartManager {
       // Generate filename based on job name or timestamp
       const fileName = generateFileName(settings.jobName);
 
-      // Send ZIP data to background to hold temporarily
+      // Store flowId reference for PWA to retrieve (actual data is in IndexedDB)
       const storeMessage: RuntimeMessage = {
         action: 'store-pending-flow',
-        zipData: zipResponse.zipData,
+        flowId: createResponse.flowId,
         fileName
       };
       await chrome.runtime.sendMessage(storeMessage);
@@ -651,17 +663,12 @@ class CartManager {
       // Open PWA in new tab
       await chrome.tabs.create({ url: pwaUrl });
 
-      // If this is the production URL, show a helpful message about opening in the app
+      // Show message - don't auto-clear cart in case PWA fails to retrieve
       if (baseUrl.includes('lqaboss.l10n.monster')) {
-        this.showStatus('Flow sent! Click "Open in app" button in the address bar to open in LQA Boss', 'success');
+        this.showStatus('Flow ready! Click "Open in app" in the address bar. Clear cart after confirming receipt.', 'success');
       } else {
-        this.showStatus('Flow sent to LQA Boss successfully!', 'success');
+        this.showStatus('Flow ready for LQA Boss. Clear cart after confirming receipt.', 'success');
       }
-
-      // Clear cart after successful send
-      setTimeout(() => {
-        this.clearCartSilent();
-      }, 1000);
     } catch (error) {
       const err = error as Error;
       console.error('[Cart] Send to LQA Boss error:', error);
@@ -683,38 +690,34 @@ class CartManager {
       const instructions = (document.getElementById('instructions') as HTMLTextAreaElement).value.trim();
       const settings = (window as any).settingsManager.getSettings();
 
-      // Create ZIP
-      const message: RuntimeMessage = {
+      // Create ZIP (service worker reads pages from storage, avoids 64MB message limit)
+      const createMessage: RuntimeMessage = {
         action: 'create-flow',
-        pages: this.capturedPages,
         instructions,
         settings
       };
-      const response = await chrome.runtime.sendMessage(message) as RuntimeResponse;
+      const createResponse = await chrome.runtime.sendMessage(createMessage) as RuntimeResponse;
 
-      if (!response.success) {
-        throw new Error(response.error);
+      if (!createResponse.success || !createResponse.flowId) {
+        throw new Error(createResponse.error || 'Failed to create flow');
       }
-
-      // Convert array back to Uint8Array then to Blob
-      const uint8Array = new Uint8Array(response.zipData!);
-      const blob = new Blob([uint8Array], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
 
       // Generate filename based on job name or timestamp
       const filename = generateFileName(settings.jobName);
 
-      chrome.downloads.download({
-        url,
-        filename,
-        saveAs: true,
-        conflictAction: 'uniquify'
-      });
+      // Download directly from service worker (avoids 64MB message limit)
+      const downloadMessage: RuntimeMessage = {
+        action: 'download-flow',
+        flowId: createResponse.flowId,
+        fileName: filename
+      };
+      const downloadResponse = await chrome.runtime.sendMessage(downloadMessage) as RuntimeResponse;
+
+      if (!downloadResponse.success) {
+        throw new Error(downloadResponse.error || 'Failed to download flow');
+      }
 
       this.showStatus(`Downloading ${filename}...`, 'success');
-
-      // Cleanup
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       const err = error as Error;
       console.error('Download error:', error);
@@ -755,11 +758,73 @@ class CartManager {
     modal?.classList.add('hidden');
   }
 
+  /**
+   * Calculate estimated memory usage for a single page
+   */
+  private calculatePageMemory(page: CapturedPage): number {
+    let bytes = 0;
+    // Screenshot is base64 encoded, estimate original binary size
+    if (page.screenshotBase64) {
+      // Base64 is ~33% larger than original, so multiply by 0.75 to get binary size
+      bytes += Math.ceil(page.screenshotBase64.length * 0.75);
+    }
+    // Segments and metadata (rough estimate)
+    if (page.segments) {
+      bytes += JSON.stringify(page.segments).length;
+    }
+    return bytes;
+  }
+
+  /**
+   * Calculate estimated memory usage of all captured pages
+   */
+  private calculateMemoryUsage(): number {
+    let totalBytes = 0;
+    for (const page of this.capturedPages) {
+      totalBytes += this.calculatePageMemory(page);
+    }
+    return totalBytes;
+  }
+
+  /**
+   * Format bytes to human-readable string
+   */
+  private formatBytes(bytes: number): string {
+    if (bytes === 0) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   private async render(): Promise<void> {
     const count = this.capturedPages.length;
     const pageCountEl = document.getElementById('page-count');
     if (pageCountEl) {
       pageCountEl.textContent = count.toString();
+    }
+
+    // Update memory usage display
+    const memoryEl = document.getElementById('cart-memory');
+    if (memoryEl) {
+      const memoryBytes = this.calculateMemoryUsage();
+      const memoryMB = memoryBytes / (1024 * 1024);
+      if (count === 0) {
+        memoryEl.textContent = '';
+        memoryEl.className = 'cart-memory';
+      } else {
+        memoryEl.textContent = this.formatBytes(memoryBytes);
+        // Add warning classes based on size
+        if (memoryMB > 50) {
+          memoryEl.className = 'cart-memory danger';
+          memoryEl.title = 'Large flow - may be slow to transfer';
+        } else if (memoryMB > 20) {
+          memoryEl.className = 'cart-memory warning';
+          memoryEl.title = 'Moderate flow size';
+        } else {
+          memoryEl.className = 'cart-memory';
+          memoryEl.title = 'Estimated memory usage';
+        }
+      }
     }
 
     const cartList = document.getElementById('cart-list');
@@ -831,7 +896,10 @@ class CartManager {
           const img = trigger.querySelector('.preview-tooltip img') as HTMLImageElement;
 
           if (img && !img.getAttribute('src')) {
-            img.src = `data:image/png;base64,${page.screenshotBase64}`;
+            // Detect PNG by magic bytes (base64 encoded "iVBORw0KGgo" is PNG header)
+            const isPng = page.screenshotBase64?.startsWith('iVBORw0KGgo');
+            const mimeType = isPng ? 'image/png' : 'image/jpeg';
+            img.src = `data:${mimeType};base64,${page.screenshotBase64}`;
           }
 
           // Position the fixed tooltip
@@ -848,7 +916,7 @@ class CartManager {
   private renderCartItem(page: CapturedPage, index: number): string {
     const segmentCount = page.segments.length;
     const matchedCount = page.matchedCount || 0;
-    const timestamp = new Date(page.timestamp).toLocaleTimeString();
+    const pageMemory = this.formatBytes(this.calculatePageMemory(page));
 
     // Extract hostname and path from URL
     let hostname = page.originalUrl;
@@ -883,7 +951,7 @@ class CartManager {
           <div class="cart-item-title">${hostname}</div>
           <div class="cart-item-url" title="${page.originalUrl}">${urlPath}</div>
           <div class="cart-item-meta">
-            ${segmentsInfo} • ${timestamp}
+            ${segmentsInfo} • ${pageMemory}
           </div>
         </div>
         <div class="cart-item-actions">

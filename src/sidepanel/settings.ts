@@ -17,7 +17,9 @@ const DEFAULT_SETTINGS: Settings = {
   targetLang: 'es',
   pwaUrl: 'https://lqaboss.l10n.monster',
   qualityModel: null,
-  jobName: ''
+  jobName: '',
+  screenshotQuality: 0,  // 0 means use default (80)
+  screenshotMaxHeight: 0  // 0 means use default (16000)
 };
 
 /**
@@ -155,6 +157,38 @@ class SettingsManager {
       this.save();
     });
 
+    document.getElementById('screenshot-quality')?.addEventListener('input', (e) => {
+      const target = e.target as HTMLInputElement;
+      const trimmed = target.value.trim();
+      if (trimmed === '') {
+        // Empty value - will use default (80)
+        this.settings.screenshotQuality = 0;  // 0 means use default
+        this.save();
+      } else {
+        const value = parseInt(trimmed, 10);
+        if (!isNaN(value) && value >= 1 && value <= 100) {
+          this.settings.screenshotQuality = value;
+          this.save();
+        }
+      }
+    });
+
+    document.getElementById('screenshot-max-height')?.addEventListener('input', (e) => {
+      const target = e.target as HTMLInputElement;
+      const trimmed = target.value.trim();
+      if (trimmed === '') {
+        // Empty value - will use default (16000)
+        this.settings.screenshotMaxHeight = 0;  // 0 means use default
+        this.save();
+      } else {
+        const value = parseInt(trimmed, 10);
+        if (!isNaN(value) && value >= 1000 && value <= 100000) {
+          this.settings.screenshotMaxHeight = value;
+          this.save();
+        }
+      }
+    });
+
     // Quality model upload
     document.getElementById('upload-quality-model-btn')?.addEventListener('click', () => {
       document.getElementById('quality-model-upload')?.click();
@@ -175,6 +209,11 @@ class SettingsManager {
     (document.getElementById('target-lang') as HTMLInputElement).value = this.settings.targetLang;
     (document.getElementById('modal-pwa-url') as HTMLInputElement).value = this.settings.pwaUrl;
     (document.getElementById('job-name') as HTMLInputElement).value = this.settings.jobName;
+    // Show empty for screenshot settings when using defaults (0 or not set)
+    const qualityEl = document.getElementById('screenshot-quality') as HTMLInputElement;
+    const maxHeightEl = document.getElementById('screenshot-max-height') as HTMLInputElement;
+    qualityEl.value = this.settings.screenshotQuality ? String(this.settings.screenshotQuality) : '';
+    maxHeightEl.value = this.settings.screenshotMaxHeight ? String(this.settings.screenshotMaxHeight) : '';
     this.updateQualityModelDisplay();
   }
 
