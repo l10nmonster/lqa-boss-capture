@@ -1,3 +1,15 @@
+# [2.4.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.3.0...v2.4.0) (2025-12-12)
+
+
+### Bug Fixes
+
+* Remove false positive error logging ([496d915](https://github.com/l10nmonster/lqa-boss-capture/commit/496d915bae703f3bd5aae5a0c64d5f61185e4e09))
+
+
+### Features
+
+* Size and quality controls over screenshots ([b7814a4](https://github.com/l10nmonster/lqa-boss-capture/commit/b7814a4d48df248bef18d389fd6f8a07084d1365))
+
 # [2.3.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.2.1...v2.3.0) (2025-12-10)
 
 
