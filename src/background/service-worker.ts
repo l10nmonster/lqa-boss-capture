@@ -1329,13 +1329,16 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
           // Convert ArrayBuffer to base64 data URL
           // Service workers don't have URL.createObjectURL, so use data URL
           const uint8Array = new Uint8Array(zipArrayBuffer);
-          let binaryString = '';
-          // Process in chunks to avoid call stack size issues with large files
-          const chunkSize = 65536;
+
+          // Build binary string efficiently by collecting chunks and joining
+          // Using 8192 bytes per chunk to stay under call stack limits for String.fromCharCode.apply
+          const binaryChunks: string[] = [];
+          const chunkSize = 8192;
           for (let i = 0; i < uint8Array.length; i += chunkSize) {
             const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
-            binaryString += String.fromCharCode.apply(null, Array.from(chunk));
+            binaryChunks.push(String.fromCharCode.apply(null, Array.from(chunk)));
           }
+          const binaryString = binaryChunks.join('');
           const base64Data = btoa(binaryString);
           const dataUrl = `data:application/octet-stream;base64,${base64Data}`;
 
