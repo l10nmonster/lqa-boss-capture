@@ -1,3 +1,11 @@
+## [2.4.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.4.0...v2.4.1) (2025-12-16)
+
+
+### Bug Fixes
+
+* Download button broken ([b0ffe89](https://github.com/l10nmonster/lqa-boss-capture/commit/b0ffe891318ef74b5daff5bd3c88e69a428c2731))
+* Implement timeouts and cancel capture button ([5876892](https://github.com/l10nmonster/lqa-boss-capture/commit/5876892cc6fec2630ee724c47d4ae0c1491c0fdc))
+
 # [2.4.0](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.3.0...v2.4.0) (2025-12-12)
 
 
