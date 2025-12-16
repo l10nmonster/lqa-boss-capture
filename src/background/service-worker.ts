@@ -24,6 +24,8 @@ import {
   isLastChunk
 } from '../lib/chunking.js';
 
+import { withTimeout, TimeoutError } from '../lib/timeout.js';
+
 // Import JSZip type declaration
 declare const JSZip: any;
 
@@ -100,6 +102,15 @@ let captureState: CaptureState = {
   isCapturing: false,
   currentTabId: null
 };
+
+// Abort controller for cancelling captures (kept separate since AbortController doesn't serialize)
+let captureAbortController: AbortController | null = null;
+
+// Current capture phase for timeout error messages
+let capturePhase: string = '';
+
+// Capture timeout in milliseconds (30 seconds)
+const CAPTURE_TIMEOUT_MS = 30000;
 
 let sidePanelOpen = false;
 let sidePanelPort: chrome.runtime.Port | null = null;
@@ -564,6 +575,15 @@ async function extractPageMetadata(tabId: number): Promise<any> {
 }
 
 /**
+ * Check if capture was aborted and throw if so
+ */
+function checkAborted(): void {
+  if (captureAbortController?.signal.aborted) {
+    throw new Error('Capture cancelled');
+  }
+}
+
+/**
  * Capture current page (screenshot + metadata)
  */
 async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
@@ -573,264 +593,312 @@ async function capturePage(tabId: number): Promise<ExtendedCapturedPage> {
 
   captureState.isCapturing = true;
   captureState.currentTabId = tabId;
+  captureAbortController = new AbortController();
+  capturePhase = 'initializing';
 
   try {
-    // Get tab info
-    const tab = await chrome.tabs.get(tabId);
-
-    // Hide X-ray overlay if present (so it doesn't appear in screenshot)
-    try {
-      await chrome.tabs.sendMessage(tabId, {
-        action: 'hide-xray-temporarily'
-      });
-      // Wait for DOM update to complete
-      await new Promise(resolve => setTimeout(resolve, 50));
-    } catch {
-      // Ignore if xray script not injected
-    }
-
-    // Get current scroll position first (before attaching debugger)
-    const [scrollInfo] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => ({ x: window.scrollX, y: window.scrollY })
-    });
-    const originalScroll = scrollInfo.result as { x: number; y: number };
-
-    // Attach debugger and get page dimensions
-    await chrome.debugger.attach({ tabId }, '1.3');
-    const dims = await getPageDimensions(tabId);
-
-    // Get settings from storage early (needed for screenshot options)
-    const settingsResult = await chrome.storage.sync.get('lqaboss_settings');
-    const settings: Settings = settingsResult.lqaboss_settings || {};
-
-    // Screenshot options from settings (with defaults)
-    const screenshotOptions: ScreenshotOptions = {
-      quality: settings.screenshotQuality || DEFAULT_SCREENSHOT_QUALITY,
-      maxHeightPixels: settings.screenshotMaxHeight || DEFAULT_SCREENSHOT_MAX_HEIGHT
-    };
-
-    // Calculate capture range
-    const maxCaptureHeight = screenshotOptions.maxHeightPixels / dims.devicePixelRatio;
-    const captureEndY = Math.min(maxCaptureHeight, dims.documentHeight);
-
-    // Extract segments - method depends on scroll lock state
-    let segments: Segment[] = [];
-
-    if (dims.isScrollLocked) {
-      // When scroll is locked, just extract at current position
-      const extractionResult = await extractPageMetadata(tabId);
-      if (extractionResult.error) {
-        throw new Error(extractionResult.error);
-      }
-      segments = extractionResult.textElements || [];
-    } else {
-      // For full-page capture: extract at each scroll position to handle lazy-loaded content
-      const scrollStep = dims.viewportHeight;
-      const allSegments: Segment[] = [];
-
-      for (let scrollY = 0; scrollY <= captureEndY; scrollY += scrollStep) {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          func: (y: number) => window.scrollTo(0, y),
-          args: [scrollY]
-        });
-        // Wait for lazy content to load and render
-        await new Promise(resolve => setTimeout(resolve, 150));
-
-        // Extract at this scroll position
-        const extractionResult = await extractPageMetadata(tabId);
-        if (extractionResult.error) {
-          throw new Error(extractionResult.error);
-        }
-
-        const pageSegments: Segment[] = extractionResult.textElements || [];
-
-        // Add segments with valid coordinates that are within the capture range
-        for (const seg of pageSegments) {
-          const hasValidCoords = seg.x !== 0 || seg.y !== 0 || seg.width !== 0 || seg.height !== 0;
-          const inCaptureRange = seg.y < captureEndY;
-          if (hasValidCoords && inCaptureRange) {
-            allSegments.push(seg);
-          }
-        }
-      }
-
-      // Scroll back to top for screenshot
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => window.scrollTo(0, 0)
-      });
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      // Deduplicate by position (same GUID can appear multiple times, but not at same position)
-      // Use a key of "guid:x:y" rounded to nearest 10px to handle minor variations
-      const seen = new Set<string>();
-      segments = allSegments.filter(seg => {
-        const key = `${seg.g}:${Math.round(seg.x / 10) * 10}:${Math.round(seg.y / 10) * 10}`;
-        if (seen.has(key)) {
-          return false;
-        }
-        seen.add(key);
-        return true;
-      });
-    }
-
-    // When scroll is locked (modal open), filter to only visible segments in viewport
-    // and adjust coordinates to be viewport-relative
-    if (dims.isScrollLocked) {
-      const scrollX = originalScroll.x;
-      const scrollY = originalScroll.y;
-
-      segments = segments
-        .filter(seg => {
-          // Skip segments marked as invisible (x:0,y:0,width:0,height:0)
-          if (seg.x === 0 && seg.y === 0 && seg.width === 0 && seg.height === 0) {
-            return false;
-          }
-          // Convert to viewport-relative for bounds check
-          const viewportY = seg.y - scrollY;
-          const viewportX = seg.x - scrollX;
-          // Only include segments within viewport bounds
-          const inViewport = viewportY < dims.viewportHeight && (viewportY + seg.height) > 0 &&
-                            viewportX < dims.viewportWidth && (viewportX + seg.width) > 0;
-          return inViewport;
-        })
-        .map(seg => ({
-          ...seg,
-          // Adjust coordinates to be viewport-relative
-          x: seg.x - scrollX,
-          y: seg.y - scrollY
-        }));
-    } else {
-      // For full-page captures, just filter out invisible segments
-      segments = segments.filter(seg =>
-        !(seg.x === 0 && seg.y === 0 && seg.width === 0 && seg.height === 0)
-      );
-    }
-
-    // Validate segments were detected
-    if (segments.length === 0) {
-      throw new Error('No segments detected on this page');
-    }
-
-    // Fetch TUs BEFORE capturing screenshot (to verify TM matches exist)
-    let segmentsWithMatches = segments;
-    const matchedTUs = new Map<string, TranslationUnit>(); // guid -> TU object
-    let matchedCount = 0;
-    let warnings: string[] = [];
-
-    // TM endpoint is required for capture
-    if (!settings.tmEndpointUrl) {
-      throw new Error('TM Lookup URL not configured. Please set it in Settings.');
-    }
-
-    if (segments.length > 0) {
-      // Fetch TUs for all segments in one batch request
-      const tmResult = await fetchTUsForSegments(segments, settings);
-
-      // Check for TM service errors
-      if (tmResult.error) {
-        throw new Error(tmResult.error);
-      }
-
-      const tus = tmResult.tus;
-      warnings = tmResult.warnings || [];
-
-      // Mark which segments matched and store the matched guid
-      segmentsWithMatches = segments.map((seg, i) => {
-        const tu = tus[i];
-        if (tu && tu.guid) {
-          return {
-            ...seg,
-            g: tu.guid,
-            matched: true
-          };
-        } else {
-          return {
-            ...seg,
-            matched: false
-          };
-        }
-      });
-
-      // Collect unique TUs
-      tus.forEach(tu => {
-        if (tu && tu.guid && !matchedTUs.has(tu.guid)) {
-          matchedTUs.set(tu.guid, tu);
-          matchedCount++;
-        }
-      });
-
-      // Validate at least one TU was matched BEFORE taking screenshot
-      if (matchedCount === 0) {
-        throw new Error(`No TUs matched for ${segments.length} segment${segments.length !== 1 ? 's' : ''}`);
-      }
-    }
-
-    // Now capture screenshot (only after TM lookup succeeds)
-    const screenshotResult = await captureScreenshot(tabId, dims, screenshotOptions);
-    const screenshotBase64 = screenshotResult.data;
-    const screenshotScale = screenshotResult.scale;
-    const capturedHeight = screenshotResult.capturedHeight;
-
-    // Clean up debugger
-    await finishFullPageCapture(tabId);
-
-    // Restore original scroll position (only if we scrolled to top earlier)
-    if (!dims.isScrollLocked) {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (scroll: { x: number; y: number }) => {
-          window.scrollTo(scroll.x, scroll.y);
-        },
-        args: [originalScroll]
-      });
-    }
-
-    // Note: X-ray will be restored by cart.js after successful capture
-    // with updated match colors (green/red)
-
-    const pageData: ExtendedCapturedPage = {
-      pageId: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      originalUrl: tab.url!,
-      title: tab.title!,
-      timestamp: new Date().toISOString(),
-      screenshotBase64,
-      segments: segmentsWithMatches,  // CSS pixel coordinates for X-ray overlay
-      // Store capture info for normalization and debugging
-      viewportWidth: dims.viewportWidth,
-      viewportHeight: dims.viewportHeight,
-      documentWidth: dims.documentWidth,
-      documentHeight: dims.documentHeight,
-      capturedHeight,  // Actual height captured (may be less than documentHeight if truncated)
-      screenshotScale: screenshotScale,
-      isMobileEmulation: dims.isMobileEmulation,
-      isScrollLocked: dims.isScrollLocked,
-      matchedTUs: Array.from(matchedTUs.values()),
-      matchedCount,
-      favicon: tab.favIconUrl,
-      warnings
-    };
-
-    return pageData;
+    // Wrap the entire capture in a timeout
+    return await withTimeout(
+      capturePageInternal(tabId),
+      CAPTURE_TIMEOUT_MS,
+      'Capture timed out' // Base message, will be enhanced with phase
+    );
   } catch (error) {
-    // Clean up debugger on error
+    // Clean up debugger on error (including timeout/cancel)
     try {
       await chrome.debugger.detach({ tabId });
     } catch { /* ignore */ }
+
+    // Enhance timeout error with current phase
+    if (error instanceof TimeoutError && capturePhase) {
+      throw new Error(`Capture timed out while ${capturePhase}`);
+    }
     throw error;
   } finally {
     captureState.isCapturing = false;
     captureState.currentTabId = null;
+    captureAbortController = null;
+    capturePhase = '';
   }
+}
+
+/**
+ * Internal capture logic (wrapped by capturePage with timeout)
+ */
+async function capturePageInternal(tabId: number): Promise<ExtendedCapturedPage> {
+  // Get tab info
+  capturePhase = 'getting tab info';
+  const tab = await chrome.tabs.get(tabId);
+
+  // Hide X-ray overlay if present (so it doesn't appear in screenshot)
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      action: 'hide-xray-temporarily'
+    });
+    // Wait for DOM update to complete
+    await new Promise(resolve => setTimeout(resolve, 50));
+  } catch {
+    // Ignore if xray script not injected
+  }
+
+  // Check if cancelled
+  checkAborted();
+
+  // Get current scroll position first (before attaching debugger)
+  const [scrollInfo] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({ x: window.scrollX, y: window.scrollY })
+  });
+  const originalScroll = scrollInfo.result as { x: number; y: number };
+
+  // Attach debugger and get page dimensions
+  capturePhase = 'attaching debugger';
+  await chrome.debugger.attach({ tabId }, '1.3');
+  capturePhase = 'getting page dimensions';
+  const dims = await getPageDimensions(tabId);
+
+  // Check if cancelled after debugger attach
+  checkAborted();
+
+  // Get settings from storage early (needed for screenshot options)
+  const settingsResult = await chrome.storage.sync.get('lqaboss_settings');
+  const settings: Settings = settingsResult.lqaboss_settings || {};
+
+  // Screenshot options from settings (with defaults)
+  const screenshotOptions: ScreenshotOptions = {
+    quality: settings.screenshotQuality || DEFAULT_SCREENSHOT_QUALITY,
+    maxHeightPixels: settings.screenshotMaxHeight || DEFAULT_SCREENSHOT_MAX_HEIGHT
+  };
+
+  // Calculate capture range
+  const maxCaptureHeight = screenshotOptions.maxHeightPixels / dims.devicePixelRatio;
+  const captureEndY = Math.min(maxCaptureHeight, dims.documentHeight);
+
+  // Extract segments - method depends on scroll lock state
+  capturePhase = 'extracting segments';
+  let segments: Segment[] = [];
+
+  if (dims.isScrollLocked) {
+    // When scroll is locked, just extract at current position
+    const extractionResult = await extractPageMetadata(tabId);
+    if (extractionResult.error) {
+      throw new Error(extractionResult.error);
+    }
+    segments = extractionResult.textElements || [];
+  } else {
+    // For full-page capture: extract at each scroll position to handle lazy-loaded content
+    const scrollStep = dims.viewportHeight;
+    const allSegments: Segment[] = [];
+    const totalScrolls = Math.ceil(captureEndY / scrollStep);
+    let currentScroll = 0;
+
+    for (let scrollY = 0; scrollY <= captureEndY; scrollY += scrollStep) {
+      currentScroll++;
+      capturePhase = `extracting segments (scroll ${currentScroll}/${totalScrolls})`;
+
+      // Check if cancelled between scroll iterations
+      checkAborted();
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (y: number) => window.scrollTo(0, y),
+        args: [scrollY]
+      });
+      // Wait for lazy content to load and render
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      // Extract at this scroll position
+      const extractionResult = await extractPageMetadata(tabId);
+      if (extractionResult.error) {
+        throw new Error(extractionResult.error);
+      }
+
+      const pageSegments: Segment[] = extractionResult.textElements || [];
+
+      // Add segments with valid coordinates that are within the capture range
+      for (const seg of pageSegments) {
+        const hasValidCoords = seg.x !== 0 || seg.y !== 0 || seg.width !== 0 || seg.height !== 0;
+        const inCaptureRange = seg.y < captureEndY;
+        if (hasValidCoords && inCaptureRange) {
+          allSegments.push(seg);
+        }
+      }
+    }
+
+    // Scroll back to top for screenshot
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => window.scrollTo(0, 0)
+    });
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Deduplicate by position (same GUID can appear multiple times, but not at same position)
+    // Use a key of "guid:x:y" rounded to nearest 10px to handle minor variations
+    const seen = new Set<string>();
+    segments = allSegments.filter(seg => {
+      const key = `${seg.g}:${Math.round(seg.x / 10) * 10}:${Math.round(seg.y / 10) * 10}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  // When scroll is locked (modal open), filter to only visible segments in viewport
+  // and adjust coordinates to be viewport-relative
+  if (dims.isScrollLocked) {
+    const scrollX = originalScroll.x;
+    const scrollY = originalScroll.y;
+
+    segments = segments
+      .filter(seg => {
+        // Skip segments marked as invisible (x:0,y:0,width:0,height:0)
+        if (seg.x === 0 && seg.y === 0 && seg.width === 0 && seg.height === 0) {
+          return false;
+        }
+        // Convert to viewport-relative for bounds check
+        const viewportY = seg.y - scrollY;
+        const viewportX = seg.x - scrollX;
+        // Only include segments within viewport bounds
+        const inViewport = viewportY < dims.viewportHeight && (viewportY + seg.height) > 0 &&
+                          viewportX < dims.viewportWidth && (viewportX + seg.width) > 0;
+        return inViewport;
+      })
+      .map(seg => ({
+        ...seg,
+        // Adjust coordinates to be viewport-relative
+        x: seg.x - scrollX,
+        y: seg.y - scrollY
+      }));
+  } else {
+    // For full-page captures, just filter out invisible segments
+    segments = segments.filter(seg =>
+      !(seg.x === 0 && seg.y === 0 && seg.width === 0 && seg.height === 0)
+    );
+  }
+
+  // Validate segments were detected
+  if (segments.length === 0) {
+    throw new Error('No segments detected on this page');
+  }
+
+  // Check if cancelled before TM lookup
+  checkAborted();
+
+  // Fetch TUs BEFORE capturing screenshot (to verify TM matches exist)
+  capturePhase = `fetching TM data for ${segments.length} segment${segments.length !== 1 ? 's' : ''}`;
+  let segmentsWithMatches = segments;
+  const matchedTUs = new Map<string, TranslationUnit>(); // guid -> TU object
+  let matchedCount = 0;
+  let warnings: string[] = [];
+
+  // TM endpoint is required for capture
+  if (!settings.tmEndpointUrl) {
+    throw new Error('TM Lookup URL not configured. Please set it in Settings.');
+  }
+
+  if (segments.length > 0) {
+    // Fetch TUs for all segments in one batch request (with abort signal)
+    const tmResult = await fetchTUsForSegments(segments, settings, captureAbortController?.signal);
+
+    // Check for TM service errors
+    if (tmResult.error) {
+      throw new Error(tmResult.error);
+    }
+
+    const tus = tmResult.tus;
+    warnings = tmResult.warnings || [];
+
+    // Mark which segments matched and store the matched guid
+    segmentsWithMatches = segments.map((seg, i) => {
+      const tu = tus[i];
+      if (tu && tu.guid) {
+        return {
+          ...seg,
+          g: tu.guid,
+          matched: true
+        };
+      } else {
+        return {
+          ...seg,
+          matched: false
+        };
+      }
+    });
+
+    // Collect unique TUs
+    tus.forEach(tu => {
+      if (tu && tu.guid && !matchedTUs.has(tu.guid)) {
+        matchedTUs.set(tu.guid, tu);
+        matchedCount++;
+      }
+    });
+
+    // Validate at least one TU was matched BEFORE taking screenshot
+    if (matchedCount === 0) {
+      throw new Error(`No TUs matched for ${segments.length} segment${segments.length !== 1 ? 's' : ''}`);
+    }
+  }
+
+  // Check if cancelled before screenshot
+  checkAborted();
+
+  // Now capture screenshot (only after TM lookup succeeds)
+  capturePhase = 'capturing screenshot';
+  const screenshotResult = await captureScreenshot(tabId, dims, screenshotOptions);
+  const screenshotBase64 = screenshotResult.data;
+  const screenshotScale = screenshotResult.scale;
+  const capturedHeight = screenshotResult.capturedHeight;
+
+  // Clean up debugger
+  await finishFullPageCapture(tabId);
+
+  // Restore original scroll position (only if we scrolled to top earlier)
+  if (!dims.isScrollLocked) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (scroll: { x: number; y: number }) => {
+        window.scrollTo(scroll.x, scroll.y);
+      },
+      args: [originalScroll]
+    });
+  }
+
+  // Note: X-ray will be restored by cart.js after successful capture
+  // with updated match colors (green/red)
+
+  const pageData: ExtendedCapturedPage = {
+    pageId: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    originalUrl: tab.url!,
+    title: tab.title!,
+    timestamp: new Date().toISOString(),
+    screenshotBase64,
+    segments: segmentsWithMatches,  // CSS pixel coordinates for X-ray overlay
+    // Store capture info for normalization and debugging
+    viewportWidth: dims.viewportWidth,
+    viewportHeight: dims.viewportHeight,
+    documentWidth: dims.documentWidth,
+    documentHeight: dims.documentHeight,
+    capturedHeight,  // Actual height captured (may be less than documentHeight if truncated)
+    screenshotScale: screenshotScale,
+    isMobileEmulation: dims.isMobileEmulation,
+    isScrollLocked: dims.isScrollLocked,
+    matchedTUs: Array.from(matchedTUs.values()),
+    matchedCount,
+    favicon: tab.favIconUrl,
+    warnings
+  };
+
+  return pageData;
 }
 
 /**
  * Fetch TUs from TM endpoint using batch POST request
  * Returns { tus: Array, warnings: Array, error: string|null }
+ * @param signal Optional AbortSignal to cancel the request
  */
-async function fetchTUsForSegments(segments: Segment[], settings: Settings): Promise<TMResponse> {
+async function fetchTUsForSegments(segments: Segment[], settings: Settings, signal?: AbortSignal): Promise<TMResponse> {
   if (!settings.tmEndpointUrl || segments.length === 0) {
     return { tus: [], warnings: [], error: null };
   }
@@ -860,7 +928,8 @@ async function fetchTUsForSegments(segments: Segment[], settings: Settings): Pro
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal
     });
 
     if (!response.ok) {
@@ -1203,6 +1272,30 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
           break;
         }
 
+        case 'cancel-capture': {
+          if (captureState.isCapturing && captureAbortController) {
+            // Abort the capture
+            captureAbortController.abort();
+
+            // Clean up debugger if attached
+            if (captureState.currentTabId) {
+              try {
+                await chrome.debugger.detach({ tabId: captureState.currentTabId });
+              } catch { /* ignore - may already be detached */ }
+            }
+
+            // Reset state
+            captureState.isCapturing = false;
+            captureState.currentTabId = null;
+            captureAbortController = null;
+
+            sendResponse({ success: true, cancelled: true });
+          } else {
+            sendResponse({ success: false, error: 'No capture in progress' });
+          }
+          break;
+        }
+
         case 'update-url-rewrite-rules': {
           urlRewriteRules = request.rules || [];
           const result = await setupURLInterception();
@@ -1305,7 +1398,9 @@ chrome.runtime.onMessage.addListener((request: RuntimeMessage, sender, sendRespo
       const normalErrors = [
         'No segments detected',
         'No TUs matched',
-        'Cannot capture restricted pages'
+        'Cannot capture restricted pages',
+        'Capture cancelled',
+        'Capture timed out'
       ];
       const isNormalError = normalErrors.some(msg => err.message.includes(msg));
 

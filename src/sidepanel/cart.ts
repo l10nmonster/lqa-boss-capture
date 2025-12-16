@@ -310,6 +310,7 @@ class CartManager {
   private async capturePage(): Promise<void> {
     const captureBtn = document.getElementById('capture-btn') as HTMLButtonElement;
     const originalText = captureBtn.textContent;
+    let cancelled = false;
 
     try {
       // Update current tab
@@ -347,9 +348,21 @@ class CartManager {
         return;
       }
 
-      // Show loading state
+      // Show loading state with cancel button
       captureBtn.disabled = true;
-      captureBtn.innerHTML = '<span class="spinner"></span> Capturing...';
+      captureBtn.innerHTML = '<span class="spinner"></span> Capturing... <button class="cancel-capture-btn" type="button">Cancel</button>';
+
+      // Set up cancel button handler
+      const cancelBtn = captureBtn.querySelector('.cancel-capture-btn') as HTMLButtonElement;
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          cancelled = true;
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = 'Cancelling...';
+          await chrome.runtime.sendMessage({ action: 'cancel-capture' });
+        });
+      }
 
       // Request capture from background script
       const message: RuntimeMessage = {
@@ -372,15 +385,32 @@ class CartManager {
           this.showWarningsModal(response.data.warnings);
         }
       } else {
-        this.showStatus(`Capture failed: ${response.error}`, 'error');
+        // Check if it was a cancellation or timeout
+        const errorMsg = response.error || '';
+        if (errorMsg.includes('cancelled') || cancelled) {
+          this.showStatus('Capture cancelled', 'info');
+        } else if (errorMsg.includes('timed out')) {
+          this.showStatus('Capture timed out', 'error');
+        } else {
+          this.showStatus(`Capture failed: ${response.error}`, 'error');
+        }
 
-        // Re-enable X-ray after failed capture
+        // Re-enable X-ray after failed/cancelled capture
         await this.enableXRay();
       }
     } catch (error) {
       const err = error as Error;
-      console.error('Capture error:', error);
-      this.showStatus(`Capture failed: ${err.message}`, 'error');
+      const errorMsg = err.message || '';
+
+      // Check if it was a cancellation or timeout
+      if (errorMsg.includes('cancelled') || cancelled) {
+        this.showStatus('Capture cancelled', 'info');
+      } else if (errorMsg.includes('timed out')) {
+        this.showStatus('Capture timed out', 'error');
+      } else {
+        console.error('Capture error:', error);
+        this.showStatus(`Capture failed: ${err.message}`, 'error');
+      }
 
       // Re-enable X-ray after failed capture
       await this.enableXRay();
