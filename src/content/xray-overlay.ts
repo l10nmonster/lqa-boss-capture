@@ -172,6 +172,7 @@ function createStyles(): void {
       align-items: flex-start;
       justify-content: center;
       padding-top: 50px;
+      direction: ltr;
     }
 
     .lqaboss-modal {
@@ -185,6 +186,7 @@ function createStyles(): void {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px;
       color: #333;
+      text-align: left;
     }
 
     .lqaboss-modal-header {
@@ -532,6 +534,7 @@ function createOverlay(segments: Segment[]): void {
     height: ${docHeight}px;
     pointer-events: none;
     z-index: 999999;
+    direction: ltr;
   `;
 
   segments.forEach((seg, index) => {
