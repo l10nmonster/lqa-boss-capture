@@ -1,3 +1,10 @@
+## [2.4.2](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.4.1...v2.4.2) (2025-12-27)
+
+
+### Bug Fixes
+
+* Force LTR layout on overlays even on RTL pages ([22c6583](https://github.com/l10nmonster/lqa-boss-capture/commit/22c65833f4f42703954683b4793596852b39a2a2))
+
 ## [2.4.1](https://github.com/l10nmonster/lqa-boss-capture/compare/v2.4.0...v2.4.1) (2025-12-16)
 
 
